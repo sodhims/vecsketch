@@ -1,0 +1,12 @@
+bin/
+obj/
+node_modules/
+.vs/
+*.user
+*.suo
+.idea/
+*.swp
+*~
+.DS_Store
+nul
+test-results/

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VecSketch</title>
+    <base href="/" />
+    <link rel="preload" id="webassembly" />
+    <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link href="VecSketch.styles.css" rel="stylesheet" />
+    <script type="importmap"></script>
+</head>
+
+<body>
+    <div id="app">
+        <svg class="loading-progress">
+            <circle r="40%" cx="50%" cy="50%" />
+            <circle r="40%" cx="50%" cy="50%" />
+        </svg>
+        <div class="loading-progress-text"></div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+    <script src="_framework/blazor.webassembly.js"></script>
+    <script>
+        // Global reference for paste handling
+        let dotNetReference = null;
+
+        function setupPasteHandler(dotNetRef) {
+            dotNetReference = dotNetRef;
+            
+            // Listen for paste events on the document
+            document.addEventListener('paste', handlePaste);
+        }
+
+        async function handlePaste(event) {
+            if (!dotNetReference) return;
+
+            // Don't intercept paste in input/textarea elements - let browser handle it
+            const target = event.target;
+            if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+                return; // Let the browser handle paste naturally
+            }
+
+            const clipboardData = event.clipboardData || window.clipboardData;
+            if (!clipboardData) return;
+
+            // Check for image data first
+            const items = clipboardData.items;
+            for (let i = 0; i < items.length; i++) {
+                const item = items[i];
+                
+                if (item.type.indexOf('image') !== -1) {
+                    event.preventDefault();
+                    const blob = item.getAsFile();
+                    const reader = new FileReader();
+                    
+                    reader.onload = async function(e) {
+                        const dataUrl = e.target.result;
+                        
+                        // Get image dimensions
+                        const img = new Image();
+                        img.onload = function() {
+                            dotNetReference.invokeMethodAsync('HandlePastedImage', dataUrl, img.width, img.height);
+                        };
+                        img.src = dataUrl;
+                    };
+                    
+                    reader.readAsDataURL(blob);
+                    return;
+                }
+            }
+
+            // Check for text data
+            const text = clipboardData.getData('text/plain');
+            if (text) {
+                event.preventDefault();
+                dotNetReference.invokeMethodAsync('HandlePastedText', text);
+            }
+        }
+
+        async function pasteFromClipboard() {
+            if (!dotNetReference) return;
+
+            try {
+                // Try to read from clipboard API (requires permission)
+                const clipboardItems = await navigator.clipboard.read();
+                
+                for (const item of clipboardItems) {
+                    // Check for image types
+                    const imageTypes = item.types.filter(type => type.startsWith('image/'));
+                    if (imageTypes.length > 0) {
+                        const blob = await item.getType(imageTypes[0]);
+                        const reader = new FileReader();
+                        
+                        reader.onload = function(e) {
+                            const dataUrl = e.target.result;
+                            const img = new Image();
+                            img.onload = function() {
+                                dotNetReference.invokeMethodAsync('HandlePastedImage', dataUrl, img.width, img.height);
+                            };
+                            img.src = dataUrl;
+                        };
+                        
+                        reader.readAsDataURL(blob);
+                        return;
+                    }
+
+                    // Check for text
+                    if (item.types.includes('text/plain')) {
+                        const blob = await item.getType('text/plain');
+                        const text = await blob.text();
+                        dotNetReference.invokeMethodAsync('HandlePastedText', text);
+                        return;
+                    }
+                }
+            } catch (err) {
+                // Fallback: try reading text from clipboard
+                try {
+                    const text = await navigator.clipboard.readText();
+                    if (text) {
+                        dotNetReference.invokeMethodAsync('HandlePastedText', text);
+                    }
+                } catch (textErr) {
+                    console.log('Clipboard access denied. Use Ctrl+V to paste.');
+                }
+            }
+        }
+
+        function downloadSvg(svgContent, filename) {
+            const blob = new Blob([svgContent], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // Touch blocking - block touch pointer events only, pen/mouse pass through unaffected
+        let touchBlockingEnabled = false;
+
+        function setTouchBlocking(enabled) {
+            touchBlockingEnabled = enabled;
+            document.querySelector('.canvas')?.classList.toggle('touch-disabled', enabled);
+        }
+
+        // Single handler added once - only active when touchBlockingEnabled is true
+        document.addEventListener('pointerdown', function(e) {
+            if (touchBlockingEnabled && e.pointerType === 'touch') {
+                const canvas = e.target.closest('.canvas');
+                if (canvas) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }
+        }, { capture: true, passive: false });
+
+        document.addEventListener('pointermove', function(e) {
+            if (touchBlockingEnabled && e.pointerType === 'touch') {
+                const canvas = e.target.closest('.canvas');
+                if (canvas) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }
+        }, { capture: true, passive: false });
+
+        document.addEventListener('pointerup', function(e) {
+            if (touchBlockingEnabled && e.pointerType === 'touch') {
+                const canvas = e.target.closest('.canvas');
+                if (canvas) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }
+        }, { capture: true, passive: false });
+
+        // Prevent default touch behaviors that interfere with drawing
+        document.addEventListener('touchstart', function(e) {
+            const canvas = e.target.closest('.canvas');
+            if (canvas) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        document.addEventListener('touchmove', function(e) {
+            const canvas = e.target.closest('.canvas');
+            if (canvas) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build:*)",
+      "Bash(dotnet add:*)",
+      "Bash(timeout 10 dotnet run:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(timeout:*)",
+      "Bash(ping:*)",
+      "Bash(pwsh:*)",
+      "Bash(npx playwright install:*)",
+      "Bash(npx playwright test:*)",
+      "Bash(npm init:*)",
+      "Bash(npm install:*)",
+      "Bash(ipconfig:*)",
+      "Bash(dotnet run:*)",
+      "Bash(node test.js:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nInitial commit - Blazor WebAssembly vector drawing app with AI integration\n\nFeatures:\n- Vector drawing canvas with multiple tools \\(pencil, shapes, text, etc.\\)\n- AI Draw panel with Ollama and Anthropic provider support\n- DrawCommand schema for programmatic drawing\n- Export to SVG/PNG\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(git reset:*)"
+    ]
+  }
+}
