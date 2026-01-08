@@ -519,6 +519,47 @@
     background: #f8d7da;
 }
 
+.endpoint-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.endpoint-row input {
+    flex: 1;
+    padding: 8px 12px;
+    border: 2px solid #ddd;
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.endpoint-row input:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.endpoint-row .btn {
+    padding: 6px 12px;
+    font-size: 11px;
+    border-radius: 6px;
+    white-space: nowrap;
+}
+
+.model-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 2px solid #ddd;
+    border-radius: 6px;
+    font-size: 13px;
+    background: white;
+    cursor: pointer;
+}
+
+.model-select:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
 /* Prompt Section */
 .ai-prompt-section {
     display: flex;
@@ -635,4 +676,406 @@
 
 .ai-content .btn-outline-secondary:hover {
     background: #f0f0f0;
+}
+
+/* ========================================
+   Cascade Mode Styles
+   ======================================== */
+
+.ai-mode-toggle {
+    display: flex;
+    gap: 0;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 2px solid #667eea;
+}
+
+.mode-btn {
+    flex: 1;
+    padding: 8px 16px;
+    border: none;
+    background: white;
+    color: #667eea;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.mode-btn.active {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.mode-btn:hover:not(.active) {
+    background: #f0f4ff;
+}
+
+/* Cascade Config Section */
+.cascade-config-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.cascade-config-section label {
+    font-size: 12px;
+    color: #555;
+    font-weight: 500;
+}
+
+.cascade-select {
+    width: 100%;
+    padding: 8px 12px;
+    border: 2px solid #ddd;
+    border-radius: 6px;
+    font-size: 13px;
+    background: white;
+    cursor: pointer;
+}
+
+.cascade-select:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+/* Cascade Steps Display */
+.cascade-steps {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #e9ecef;
+}
+
+.cascade-step {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    background: white;
+    border-radius: 6px;
+    border: 1px solid #e0e0e0;
+    font-size: 12px;
+    transition: all 0.2s;
+}
+
+.cascade-step.disabled {
+    opacity: 0.5;
+    background: #f0f0f0;
+}
+
+.cascade-step input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+}
+
+.step-role {
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    color: #667eea;
+    background: #f0f4ff;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.step-name {
+    flex: 1;
+    font-weight: 500;
+    color: #333;
+}
+
+.step-provider {
+    font-size: 10px;
+    color: #888;
+    background: #f0f0f0;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+/* Cascade API Keys */
+.cascade-keys {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cascade-key-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.cascade-key-row label {
+    font-size: 11px;
+    color: #555;
+    font-weight: 500;
+}
+
+.cascade-key-row input {
+    padding: 8px 12px;
+    border: 2px solid #ddd;
+    border-radius: 6px;
+    font-size: 12px;
+    font-family: 'Courier New', monospace;
+}
+
+.cascade-key-row input:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.cascade-key-row .key-hint {
+    font-size: 10px;
+    color: #888;
+    font-style: italic;
+}
+
+/* Cascade Progress Display */
+.cascade-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #e9ecef;
+    margin-top: 10px;
+}
+
+.cascade-progress-step {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 10px;
+    background: white;
+    border-radius: 6px;
+    border-left: 3px solid #ddd;
+    font-size: 12px;
+}
+
+.cascade-progress-step .step-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    width: 100%;
+}
+
+.cascade-progress-step .step-header:hover {
+    opacity: 0.8;
+}
+
+.step-expand-icon {
+    font-size: 10px;
+    color: #666;
+    margin-left: auto;
+}
+
+.step-output,
+.step-error {
+    margin-top: 4px;
+    padding: 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    max-height: 300px;
+    overflow: auto;
+}
+
+.step-output {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+}
+
+.step-output pre,
+.step-error pre {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    line-height: 1.4;
+}
+
+.step-error {
+    background: #fff0f0;
+    border: 1px solid #dc3545;
+    color: #dc3545;
+}
+
+.cascade-progress-step.expanded {
+    background: #f8f9fa;
+}
+
+.cascade-progress-step.pending {
+    border-left-color: #aaa;
+    opacity: 0.6;
+}
+
+.cascade-progress-step.running {
+    border-left-color: #ffc107;
+    background: #fffbeb;
+}
+
+.cascade-progress-step.completed {
+    border-left-color: #28a745;
+    background: #f0fff4;
+}
+
+.cascade-progress-step.failed {
+    border-left-color: #dc3545;
+    background: #fff0f0;
+}
+
+.cascade-progress-step.skipped {
+    border-left-color: #888;
+    opacity: 0.5;
+}
+
+.step-status-icon {
+    font-family: 'Courier New', monospace;
+    font-size: 10px;
+    font-weight: 700;
+    min-width: 24px;
+    text-align: center;
+}
+
+.cascade-progress-step.completed .step-status-icon {
+    color: #28a745;
+}
+
+.cascade-progress-step.failed .step-status-icon {
+    color: #dc3545;
+}
+
+.cascade-progress-step.running .step-status-icon {
+    color: #ffc107;
+}
+
+.cascade-progress-step .step-name {
+    flex: 1;
+}
+
+.step-time {
+    font-size: 10px;
+    color: #888;
+    font-family: 'Courier New', monospace;
+}
+
+.cascade-total-time {
+    text-align: right;
+    font-size: 11px;
+    font-weight: 600;
+    color: #667eea;
+    padding-top: 6px;
+    border-top: 1px dashed #ddd;
+    margin-top: 4px;
+}
+
+/* ========================================
+   Matrix-Based Cascade Styles
+   ======================================== */
+
+.cascade-matrix {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border: 1px solid #e9ecef;
+}
+
+.matrix-slot {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 10px;
+    background: white;
+    border-radius: 6px;
+    border: 2px solid #e0e0e0;
+    transition: all 0.2s;
+}
+
+.matrix-slot.active {
+    border-color: #667eea;
+    background: #fafbff;
+}
+
+.slot-number {
+    font-family: 'Courier New', monospace;
+    font-size: 14px;
+    font-weight: 700;
+    color: #667eea;
+    background: #f0f4ff;
+    padding: 4px 10px;
+    border-radius: 4px;
+    min-width: 30px;
+    text-align: center;
+}
+
+.matrix-slot:not(.active) .slot-number {
+    color: #aaa;
+    background: #f0f0f0;
+}
+
+.slot-provider {
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 12px;
+    background: white;
+    cursor: pointer;
+    min-width: 100px;
+}
+
+.slot-provider:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.slot-model {
+    flex: 1;
+    min-width: 120px;
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 11px;
+    font-family: 'Courier New', monospace;
+}
+
+.slot-model:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+.slot-endpoint {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 11px;
+    margin-top: 4px;
+}
+
+.slot-endpoint:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+/* Routing Description */
+.cascade-routing {
+    padding: 10px 12px;
+    background: linear-gradient(135deg, #f0f4ff 0%, #faf0ff 100%);
+    border-radius: 6px;
+    font-size: 11px;
+    color: #555;
+    text-align: center;
+    font-weight: 500;
+    border: 1px dashed #667eea;
 }

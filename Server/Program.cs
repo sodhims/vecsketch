@@ -1,5 +1,3 @@
-using Microsoft.AspNetCore.Components.WebAssembly.Server;
-
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddControllers();
@@ -12,10 +10,9 @@ if (app.Environment.IsDevelopment())
     app.UseWebAssemblyDebugging();
 }
 
-app.UseBlazorFrameworkFiles();
-app.UseStaticFiles();
 app.UseRouting();
 
+app.MapStaticAssets();
 app.MapControllers();
 app.MapFallbackToFile("index.html");
 

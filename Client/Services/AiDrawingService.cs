@@ -8,7 +8,8 @@ namespace VecSketch.Client.Services;
 public enum AiProvider
 {
     Anthropic,
-    Ollama
+    Ollama,
+    OllamaLocal
 }
 
 public class AiDrawingService
@@ -47,9 +48,13 @@ public class AiDrawingService
         """;
 
     public string? ApiKey { get; set; }
-    public AiProvider Provider { get; set; } = AiProvider.Ollama;
+    public AiProvider Provider { get; set; } = AiProvider.OllamaLocal;
     public string OllamaEndpoint { get; set; } = "http://10.10.48.219:11434";
-    public string OllamaModel { get; set; } = "deepseek-r1:14b";
+    public string OllamaModel { get; set; } = "llama3.2";
+
+    public string EffectiveOllamaEndpoint => Provider == AiProvider.OllamaLocal
+        ? "http://localhost:11434"
+        : OllamaEndpoint;
 
     public AiDrawingService(HttpClient http)
     {
@@ -67,11 +72,11 @@ public class AiDrawingService
         {
             var request = new AiGenerateRequest
             {
-                Provider = Provider.ToString(),
+                Provider = Provider == AiProvider.OllamaLocal ? "Ollama" : Provider.ToString(),
                 Prompt = prompt,
                 SystemPrompt = _systemPrompt,
                 ApiKey = ApiKey,
-                OllamaEndpoint = OllamaEndpoint,
+                OllamaEndpoint = EffectiveOllamaEndpoint,
                 OllamaModel = OllamaModel
             };
 
@@ -160,19 +165,111 @@ public class AiDrawingService
         }
     }
 
+    public async Task<OllamaModelsResult> GetOllamaModelsAsync(string? endpoint = null)
+    {
+        try
+        {
+            var effectiveEndpoint = endpoint ?? EffectiveOllamaEndpoint;
+            var url = $"/api/ai/ollama-models?endpoint={Uri.EscapeDataString(effectiveEndpoint)}";
+
+            var response = await _http.GetFromJsonAsync<OllamaModelsResponse>(url, _jsonOptions);
+
+            if (response == null)
+            {
+                return new OllamaModelsResult
+                {
+                    Success = false,
+                    Error = "No response from server"
+                };
+            }
+
+            return new OllamaModelsResult
+            {
+                Success = response.Success,
+                Error = response.Error,
+                Models = response.Models.Select(m => m.Name).ToList()
+            };
+        }
+        catch (HttpRequestException ex)
+        {
+            return new OllamaModelsResult
+            {
+                Success = false,
+                Error = $"Network error: {ex.Message}"
+            };
+        }
+        catch (Exception ex)
+        {
+            return new OllamaModelsResult
+            {
+                Success = false,
+                Error = $"Error: {ex.Message}"
+            };
+        }
+    }
+
     private AiDrawingResult ParseDrawingResponse(string responseText)
     {
         try
         {
-            // Try to extract JSON from the response (in case the model adds extra text)
-            var jsonStart = responseText.IndexOf('{');
-            var jsonEnd = responseText.LastIndexOf('}');
-            if (jsonStart >= 0 && jsonEnd > jsonStart)
+            var originalResponse = responseText;
+
+            // DeepSeek-R1 wraps thinking in <think>...</think> tags - remove it
+            var thinkEndIndex = responseText.IndexOf("</think>", StringComparison.OrdinalIgnoreCase);
+            if (thinkEndIndex >= 0)
             {
-                responseText = responseText.Substring(jsonStart, jsonEnd - jsonStart + 1);
+                responseText = responseText.Substring(thinkEndIndex + 8).Trim();
             }
 
-            var drawingResponse = JsonSerializer.Deserialize<DrawingResponse>(responseText, _jsonOptions);
+            // Also handle if wrapped in ```json ... ```
+            if (responseText.Contains("```json"))
+            {
+                var jsonBlockStart = responseText.IndexOf("```json") + 7;
+                var jsonBlockEnd = responseText.IndexOf("```", jsonBlockStart);
+                if (jsonBlockEnd > jsonBlockStart)
+                {
+                    responseText = responseText.Substring(jsonBlockStart, jsonBlockEnd - jsonBlockStart).Trim();
+                }
+            }
+            else if (responseText.Contains("```"))
+            {
+                var codeBlockStart = responseText.IndexOf("```") + 3;
+                // Skip language identifier if present (e.g., ```json\n)
+                var newlineAfterTicks = responseText.IndexOf('\n', codeBlockStart);
+                if (newlineAfterTicks > 0 && newlineAfterTicks - codeBlockStart < 10)
+                {
+                    codeBlockStart = newlineAfterTicks + 1;
+                }
+                var codeBlockEnd = responseText.IndexOf("```", codeBlockStart);
+                if (codeBlockEnd > codeBlockStart)
+                {
+                    responseText = responseText.Substring(codeBlockStart, codeBlockEnd - codeBlockStart).Trim();
+                }
+            }
+
+            // Find the JSON object containing "Commands" array
+            var jsonText = ExtractJsonWithCommands(responseText);
+            if (jsonText == null)
+            {
+                // Fallback: try first { to last }
+                var jsonStart = responseText.IndexOf('{');
+                var jsonEnd = responseText.LastIndexOf('}');
+                if (jsonStart >= 0 && jsonEnd > jsonStart)
+                {
+                    jsonText = responseText.Substring(jsonStart, jsonEnd - jsonStart + 1);
+                }
+                else
+                {
+                    return new AiDrawingResult
+                    {
+                        Success = false,
+                        Error = "No JSON found in response",
+                        RawResponse = originalResponse
+                    };
+                }
+            }
+
+            var drawingResponse = JsonSerializer.Deserialize<DrawingResponse>(jsonText, _jsonOptions);
 
             if (drawingResponse == null)
             {
@@ -180,7 +277,7 @@ public class AiDrawingService
                 {
                     Success = false,
                     Error = "Failed to parse drawing commands",
-                    RawResponse = responseText
+                    RawResponse = originalResponse
                 };
             }
 
@@ -189,7 +286,7 @@ public class AiDrawingService
                 Success = true,
                 Response = drawingResponse,
                 Thinking = drawingResponse.Thinking,
-                RawResponse = responseText
+                RawResponse = originalResponse
             };
         }
         catch (JsonException ex)
@@ -200,6 +297,40 @@ public class AiDrawingService
                 Error = $"JSON parse error: {ex.Message}",
                 RawResponse = responseText
             };
+        }
+    }
+
+    private string? ExtractJsonWithCommands(string text)
+    {
+        // Find a JSON object that contains "Commands"
+        var searchStart = 0;
+        while (true)
+        {
+            var braceStart = text.IndexOf('{', searchStart);
+            if (braceStart < 0) return null;
+
+            // Find matching closing brace
+            var depth = 1;
+            var pos = braceStart + 1;
+            while (pos < text.Length && depth > 0)
+            {
+                if (text[pos] == '{') depth++;
+                else if (text[pos] == '}') depth--;
+                pos++;
+            }
+
+            if (depth == 0)
+            {
+                var candidate = text.Substring(braceStart, pos - braceStart);
+                // Check if this JSON has a Commands array
+                if (candidate.Contains("\"Commands\"", StringComparison.OrdinalIgnoreCase) ||
+                    candidate.Contains("\"commands\"", StringComparison.OrdinalIgnoreCase))
+                {
+                    return candidate;
+                }
+            }
+
+            searchStart = braceStart + 1;
         }
     }
 }
@@ -218,4 +349,11 @@ public class ApiKeyTestResult
 {
     public bool Success { get; init; }
     public string? Error { get; init; }
+}
+
+public class OllamaModelsResult
+{
+    public bool Success { get; init; }
+    public string? Error { get; init; }
+    public List<string> Models { get; init; } = new();
 }

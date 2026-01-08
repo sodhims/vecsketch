@@ -1,8 +1,15 @@
 @namespace VecSketch.Client.Components
 @using VecSketch.Client.Models
 @using VecSketch.Client.Services
+@using VecSketch.Shared
+@using DrawingTool = VecSketch.Client.Models.DrawingTool
+@using VectorElement = VecSketch.Client.Models.VectorElement
+@using Point = VecSketch.Client.Models.Point
+@using DrawCommand = VecSketch.Client.Models.DrawCommand
+@using CommandResult = VecSketch.Client.Models.CommandResult
 @inject IJSRuntime JS
 @inject AiDrawingService AiService
+@inject CascadeService CascadeService
 
 <div class="sketch-container" @ref="containerElement" tabindex="0" @onkeydown="OnKeyDown">
     <div class="toolbar">
@@ -231,41 +238,198 @@
         @if (ShowAiPanel)
         {
             <div class="ai-content">
-                <div class="ai-provider-section">
-                    <label>Provider:</label>
-                    <select @bind="SelectedProvider" class="provider-select">
-                        <option value="Ollama">Ollama (Local)</option>
-                        <option value="Anthropic">Anthropic (Claude)</option>
-                    </select>
+                <!-- Mode Toggle -->
+                <div class="ai-mode-toggle">
+                    <button class="mode-btn @(!UseCascadeMode ? "active" : "")" @onclick="() => UseCascadeMode = false">Single</button>
+                    <button class="mode-btn @(UseCascadeMode ? "active" : "")" @onclick="() => UseCascadeMode = true">Cascade</button>
                 </div>
 
-                @if (AiService.Provider == AiProvider.Ollama)
+                @if (!UseCascadeMode)
                 {
-                    <div class="ai-key-section">
-                        <label>Ollama Endpoint:</label>
-                        <input type="text" @bind="AiService.OllamaEndpoint" @bind:event="oninput" placeholder="http://10.10.48.219:11434" />
-                        <label style="margin-top: 8px;">Model:</label>
-                        <input type="text" @bind="AiService.OllamaModel" @bind:event="oninput" placeholder="deepseek-r1:14b" />
+                    <!-- Single Provider Mode (existing UI) -->
+                    <div class="ai-provider-section">
+                        <label>Provider:</label>
+                        <select @bind="SelectedProvider" class="provider-select">
+                            <option value="OllamaLocal">Ollama (localhost)</option>
+                            <option value="Ollama">Ollama (Remote)</option>
+                            <option value="Anthropic">Anthropic (Claude)</option>
+                        </select>
                     </div>
+
+                    @if (AiService.Provider == AiProvider.Ollama)
+                    {
+                        <div class="ai-key-section">
+                            <label>Ollama Endpoint:</label>
+                            <div class="endpoint-row">
+                                <input type="text" @bind="OllamaEndpointInput" @bind:event="oninput" placeholder="http://10.10.48.219:11434" />
+                                <button class="btn btn-sm btn-outline-primary" @onclick="RefreshOllamaModels" disabled="@OllamaModelsLoading">
+                                    @(OllamaModelsLoading ? "..." : "Connect")
+                                </button>
+                            </div>
+                            <label style="margin-top: 8px;">Model:</label>
+                            @if (AvailableOllamaModels.Count > 0)
+                            {
+                                <select @bind="AiService.OllamaModel" class="model-select">
+                                    @foreach (var model in AvailableOllamaModels)
+                                    {
+                                        <option value="@model">@model</option>
+                                    }
+                                </select>
+                            }
+                            else
+                            {
+                                <input type="text" @bind="AiService.OllamaModel" @bind:event="oninput" placeholder="deepseek-r1:14b" />
+                            }
+                            @if (!string.IsNullOrEmpty(OllamaStatus))
+                            {
+                                <span class="key-status @(OllamaStatusIsError ? "key-error" : "key-valid")">@OllamaStatus</span>
+                            }
+                        </div>
+                    }
+                    else if (AiService.Provider == AiProvider.OllamaLocal)
+                    {
+                        <div class="ai-key-section">
+                            <div class="endpoint-row">
+                                <label>Model:</label>
+                                <button class="btn btn-sm btn-outline-primary" @onclick="RefreshOllamaModels" disabled="@OllamaModelsLoading" style="margin-left: auto;">
+                                    @(OllamaModelsLoading ? "..." : "Refresh")
+                                </button>
+                            </div>
+                            @if (AvailableOllamaModels.Count > 0)
+                            {
+                                <select @bind="AiService.OllamaModel" class="model-select">
+                                    @foreach (var model in AvailableOllamaModels)
+                                    {
+                                        <option value="@model">@model</option>
+                                    }
+                                </select>
+                            }
+                            else
+                            {
+                                <input type="text" @bind="AiService.OllamaModel" @bind:event="oninput" placeholder="llama3.2" />
+                            }
+                            @if (!string.IsNullOrEmpty(OllamaStatus))
+                            {
+                                <span class="key-status @(OllamaStatusIsError ? "key-error" : "key-valid")">@OllamaStatus</span>
+                            }
+                            else
+                            {
+                                <span class="key-status key-valid" style="margin-top: 6px;">Using localhost:11434</span>
+                            }
+                        </div>
+                    }
+                    else if (AiService.Provider == AiProvider.Anthropic)
+                    {
+                        <div class="ai-key-section">
+                            <label>API Key:</label>
+                            <div class="api-key-row">
+                                <input type="text" @bind="ApiKeyInput" @bind:event="oninput" placeholder="Paste Anthropic API key here..." disabled="@ApiKeyTesting" />
+                                <button class="btn btn-sm btn-primary" @onclick="SaveApiKey" disabled="@ApiKeyTesting">
+                                    @(ApiKeyTesting ? "Testing..." : "Set Key")
+                                </button>
+                            </div>
+                            @if (!string.IsNullOrEmpty(ApiKeyStatus))
+                            {
+                                <span class="key-status @(ApiKeyStatus == "Key valid!" ? "key-valid" : ApiKeyStatus == "Testing key..." ? "key-testing" : "key-error")">@ApiKeyStatus</span>
+                            }
+                            else if (!string.IsNullOrEmpty(AiService.ApiKey))
+                            {
+                                <span class="key-status key-valid">Key saved</span>
+                            }
+                        </div>
+                    }
                 }
                 else
                 {
-                    <div class="ai-key-section">
-                        <label>API Key:</label>
-                        <div class="api-key-row">
-                            <input type="text" @bind="ApiKeyInput" @bind:event="oninput" placeholder="Paste Anthropic API key here..." disabled="@ApiKeyTesting" />
-                            <button class="btn btn-sm btn-primary" @onclick="SaveApiKey" disabled="@ApiKeyTesting">
-                                @(ApiKeyTesting ? "Testing..." : "Set Key")
-                            </button>
+                    <!-- Matrix-Based Cascade Mode UI -->
+                    <div class="cascade-config-section">
+                        <label>Preset:</label>
+                        <select class="cascade-select" @bind="SelectedPresetIndex">
+                            @for (int i = 0; i < CascadeService.Presets.Count; i++)
+                            {
+                                <option value="@i">@CascadeService.Presets[i].Name</option>
+                            }
+                        </select>
+
+                        <!-- Matrix Slots -->
+                        <div class="cascade-matrix">
+                            <div class="matrix-slot @(!CascadeService.CurrentMatrix.Slot1.IsEmpty ? "active" : "")">
+                                <span class="slot-number">#1</span>
+                                <select @bind="Slot1Provider" class="slot-provider">
+                                    <option value="">-- None --</option>
+                                    <option value="Ollama">Ollama</option>
+                                    <option value="Anthropic">Anthropic</option>
+                                    <option value="DeepSeek">DeepSeek</option>
+                                </select>
+                                @if (!CascadeService.CurrentMatrix.Slot1.IsEmpty)
+                                {
+                                    <input type="text" @bind="CascadeService.CurrentMatrix.Slot1.Model" placeholder="Model" class="slot-model" />
+                                    @if (CascadeService.CurrentMatrix.Slot1.Provider == "Ollama")
+                                    {
+                                        <input type="text" @bind="CascadeService.CurrentMatrix.Slot1.Endpoint" placeholder="localhost:11434" class="slot-endpoint" />
+                                    }
+                                }
+                            </div>
+
+                            <div class="matrix-slot @(!CascadeService.CurrentMatrix.Slot2.IsEmpty ? "active" : "")">
+                                <span class="slot-number">#2</span>
+                                <select @bind="Slot2Provider" class="slot-provider">
+                                    <option value="">-- None --</option>
+                                    <option value="Ollama">Ollama</option>
+                                    <option value="Anthropic">Anthropic</option>
+                                    <option value="DeepSeek">DeepSeek</option>
+                                </select>
+                                @if (!CascadeService.CurrentMatrix.Slot2.IsEmpty)
+                                {
+                                    <input type="text" @bind="CascadeService.CurrentMatrix.Slot2.Model" placeholder="Model" class="slot-model" />
+                                    @if (CascadeService.CurrentMatrix.Slot2.Provider == "Ollama")
+                                    {
+                                        <input type="text" @bind="CascadeService.CurrentMatrix.Slot2.Endpoint" placeholder="localhost:11434" class="slot-endpoint" />
+                                    }
+                                }
+                            </div>
+
+                            <div class="matrix-slot @(!CascadeService.CurrentMatrix.Slot3.IsEmpty ? "active" : "")">
+                                <span class="slot-number">#3</span>
+                                <select @bind="Slot3Provider" class="slot-provider">
+                                    <option value="">-- None --</option>
+                                    <option value="Ollama">Ollama</option>
+                                    <option value="Anthropic">Anthropic</option>
+                                    <option value="DeepSeek">DeepSeek</option>
+                                </select>
+                                @if (!CascadeService.CurrentMatrix.Slot3.IsEmpty)
+                                {
+                                    <input type="text" @bind="CascadeService.CurrentMatrix.Slot3.Model" placeholder="Model" class="slot-model" />
+                                    @if (CascadeService.CurrentMatrix.Slot3.Provider == "Ollama")
+                                    {
+                                        <input type="text" @bind="CascadeService.CurrentMatrix.Slot3.Endpoint" placeholder="localhost:11434" class="slot-endpoint" />
+                                    }
+                                }
+                            </div>
                         </div>
-                        @if (!string.IsNullOrEmpty(ApiKeyStatus))
-                        {
-                            <span class="key-status @(ApiKeyStatus == "Key valid!" ? "key-valid" : ApiKeyStatus == "Testing key..." ? "key-testing" : "key-error")">@ApiKeyStatus</span>
-                        }
-                        else if (!string.IsNullOrEmpty(AiService.ApiKey))
-                        {
-                            <span class="key-status key-valid">Key saved</span>
-                        }
+
+                        <!-- Routing description -->
+                        <div class="cascade-routing">
+                            @CascadeService.GetRoutingDescription()
+                        </div>
+
+                        <!-- API Keys for cascade (shares keys with Single mode) -->
+                        <div class="cascade-keys">
+                            @if (CascadeNeedsAnthropicKey && string.IsNullOrEmpty(AiService.ApiKey))
+                            {
+                                <div class="cascade-key-row">
+                                    <label>Anthropic Key:</label>
+                                    <input type="password" @bind="CascadeAnthropicKeyInput" placeholder="sk-ant-..." />
+                                    <span class="key-hint">(or set in Single mode)</span>
+                                </div>
+                            }
+                            else if (CascadeNeedsAnthropicKey)
+                            {
+                                <div class="cascade-key-row">
+                                    <span class="key-status key-valid">Using Anthropic key from Single mode</span>
+                                </div>
+                            }
+                        </div>
                     </div>
                 }
 
@@ -275,12 +439,63 @@
 
                     <div class="ai-options">
                         <label><input type="checkbox" @bind="AiClearBeforeGenerate" /> Clear canvas first</label>
+                        <label><input type="checkbox" @bind="LockCanvasSize" /> Lock canvas size</label>
+                        @if (UseCascadeMode)
+                        {
+                            <label><input type="checkbox" @bind="CascadeReverse" /> Reverse order</label>
+                        }
                     </div>
 
-                    <button class="btn btn-primary ai-generate-btn" @onclick="GenerateFromAi" disabled="@(AiGenerating || (AiService.Provider == AiProvider.Anthropic && string.IsNullOrEmpty(AiService.ApiKey)))">
-                        @(AiGenerating ? "Generating..." : "Generate Drawing")
-                    </button>
+                    @if (UseCascadeMode)
+                    {
+                        <button class="btn btn-primary ai-generate-btn" @onclick="GenerateWithCascade" disabled="@(AiGenerating || !CanRunCascade)">
+                            @(AiGenerating ? "Running Cascade..." : (CascadeReverse ? "Run Cascade (Reverse)" : "Run Cascade"))
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="btn btn-primary ai-generate-btn" @onclick="GenerateFromAi" disabled="@(AiGenerating || (AiService.Provider == AiProvider.Anthropic && string.IsNullOrEmpty(AiService.ApiKey)))">
+                            @(AiGenerating ? "Generating..." : "Generate Drawing")
+                        </button>
+                    }
                 </div>
+
+                <!-- Cascade Progress -->
+                @if (UseCascadeMode && CascadeStepResults.Count > 0)
+                {
+                    <div class="cascade-progress">
+                        @foreach (var step in CascadeStepResults)
+                        {
+                            <div class="cascade-progress-step @step.Status.ToString().ToLower() @(ExpandedCascadeStep == step.StepId ? "expanded" : "")">
+                                <div class="step-header" @onclick="() => ToggleCascadeStep(step.StepId)">
+                                    <span class="step-status-icon">@GetStatusIcon(step.Status)</span>
+                                    <span class="step-name">@step.StepName</span>
+                                    <span class="step-time">@(step.ElapsedMs)ms</span>
+                                    @if (!string.IsNullOrEmpty(step.Output) || !string.IsNullOrEmpty(step.Error))
+                                    {
+                                        <span class="step-expand-icon">@(ExpandedCascadeStep == step.StepId ? "▼" : "▶")</span>
+                                    }
+                                </div>
+                                @if (ExpandedCascadeStep == step.StepId && !string.IsNullOrEmpty(step.Output))
+                                {
+                                    <div class="step-output">
+                                        <pre>@TruncateOutput(step.Output, 2000)</pre>
+                                    </div>
+                                }
+                                @if (ExpandedCascadeStep == step.StepId && !string.IsNullOrEmpty(step.Error))
+                                {
+                                    <div class="step-error">
+                                        <pre>@step.Error</pre>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        @if (CascadeTotalMs > 0)
+                        {
+                            <div class="cascade-total-time">Total: @CascadeTotalMs ms</div>
+                        }
+                    </div>
+                }
 
                 @if (!string.IsNullOrEmpty(AiThinking))
                 {
@@ -346,6 +561,7 @@
     private Point? DragStart;
     private string? ResizeHandle; // "nw", "ne", "sw", "se", "n", "s", "e", "w"
     private BoundingBox? OriginalBounds;
+    private VectorElement? OriginalElementSnapshot; // Store original element state for resize
 
     // AI Drawing state
     private bool ShowAiPanel = false;
@@ -353,14 +569,207 @@
     private string AiPrompt = "";
     private bool AiGenerating = false;
     private bool AiClearBeforeGenerate = true;
+    private bool LockCanvasSize = false;
     private string? AiThinking;
     private string? AiError;
     private CommandResult? AiResult;
 
+    // Cascade state
+    private bool UseCascadeMode = false;
+    private bool CascadeReverse = false;
+    private List<CascadeStepProgress> CascadeStepResults = new();
+    private long CascadeTotalMs = 0;
+    private int _selectedPresetIndex = 0;
+    private string? ExpandedCascadeStep = null;
+
+    // Property to set Anthropic key in cascade mode - shares with AiService.ApiKey
+    private string CascadeAnthropicKeyInput
+    {
+        get => AiService.ApiKey ?? "";
+        set => AiService.ApiKey = value;
+    }
+
+    private int SelectedPresetIndex
+    {
+        get => _selectedPresetIndex;
+        set
+        {
+            _selectedPresetIndex = value;
+            if (value >= 0 && value < CascadeService.Presets.Count)
+            {
+                CascadeService.ApplyPreset(CascadeService.Presets[value]);
+            }
+        }
+    }
+
+    // Slot provider bindings - reset model when provider changes
+    private string Slot1Provider
+    {
+        get => CascadeService.CurrentMatrix.Slot1.Provider;
+        set
+        {
+            var oldProvider = CascadeService.CurrentMatrix.Slot1.Provider;
+            CascadeService.CurrentMatrix.Slot1.Provider = value;
+
+            // Clear model and endpoint when provider changes
+            if (oldProvider != value)
+            {
+                CascadeService.CurrentMatrix.Slot1.Model = null;
+                CascadeService.CurrentMatrix.Slot1.Endpoint = null;
+            }
+
+            // Set defaults based on new provider
+            if (value == "Ollama")
+            {
+                CascadeService.CurrentMatrix.Slot1.Model ??= "gemma3:4b";
+                CascadeService.CurrentMatrix.Slot1.Endpoint ??= "http://localhost:11434";
+            }
+            else if (value == "Anthropic")
+            {
+                CascadeService.CurrentMatrix.Slot1.Model ??= "claude-sonnet-4-20250514";
+            }
+            else if (value == "DeepSeek")
+            {
+                CascadeService.CurrentMatrix.Slot1.Model ??= "deepseek-chat";
+            }
+        }
+    }
+
+    private string Slot2Provider
+    {
+        get => CascadeService.CurrentMatrix.Slot2.Provider;
+        set
+        {
+            var oldProvider = CascadeService.CurrentMatrix.Slot2.Provider;
+            CascadeService.CurrentMatrix.Slot2.Provider = value;
+
+            if (oldProvider != value)
+            {
+                CascadeService.CurrentMatrix.Slot2.Model = null;
+                CascadeService.CurrentMatrix.Slot2.Endpoint = null;
+            }
+
+            if (value == "Ollama")
+            {
+                CascadeService.CurrentMatrix.Slot2.Model ??= "gemma3:4b";
+                CascadeService.CurrentMatrix.Slot2.Endpoint ??= "http://localhost:11434";
+            }
+            else if (value == "Anthropic")
+            {
+                CascadeService.CurrentMatrix.Slot2.Model ??= "claude-sonnet-4-20250514";
+            }
+            else if (value == "DeepSeek")
+            {
+                CascadeService.CurrentMatrix.Slot2.Model ??= "deepseek-chat";
+            }
+        }
+    }
+
+    private string Slot3Provider
+    {
+        get => CascadeService.CurrentMatrix.Slot3.Provider;
+        set
+        {
+            var oldProvider = CascadeService.CurrentMatrix.Slot3.Provider;
+            CascadeService.CurrentMatrix.Slot3.Provider = value;
+
+            if (oldProvider != value)
+            {
+                CascadeService.CurrentMatrix.Slot3.Model = null;
+                CascadeService.CurrentMatrix.Slot3.Endpoint = null;
+            }
+
+            if (value == "Ollama")
+            {
+                CascadeService.CurrentMatrix.Slot3.Model ??= "gemma3:4b";
+                CascadeService.CurrentMatrix.Slot3.Endpoint ??= "http://localhost:11434";
+            }
+            else if (value == "Anthropic")
+            {
+                CascadeService.CurrentMatrix.Slot3.Model ??= "claude-sonnet-4-20250514";
+            }
+            else if (value == "DeepSeek")
+            {
+                CascadeService.CurrentMatrix.Slot3.Model ??= "deepseek-chat";
+            }
+        }
+    }
+
+    private bool CascadeNeedsAnthropicKey
+    {
+        get
+        {
+            var slots = CascadeService.CurrentMatrix.GetActiveSlots();
+            return slots.Any(s => s.Provider == "Anthropic");
+        }
+    }
+
+    private bool CanRunCascade
+    {
+        get
+        {
+            var activeSlots = CascadeService.CurrentMatrix.GetActiveSlots();
+            if (activeSlots.Count == 0) return false;
+
+            // Check if required API keys are provided (Anthropic shares with AiService.ApiKey)
+            // DeepSeek doesn't require an API key
+            if (CascadeNeedsAnthropicKey && string.IsNullOrEmpty(AiService.ApiKey)) return false;
+
+            return true;
+        }
+    }
+
+    private string GetStatusIcon(CascadeStepStatus status) => status switch
+    {
+        CascadeStepStatus.Pending => "...",
+        CascadeStepStatus.Running => ">>",
+        CascadeStepStatus.Completed => "OK",
+        CascadeStepStatus.Failed => "X",
+        CascadeStepStatus.Skipped => "--",
+        _ => "?"
+    };
+
+    private void ToggleCascadeStep(string stepId)
+    {
+        ExpandedCascadeStep = ExpandedCascadeStep == stepId ? null : stepId;
+    }
+
+    private string TruncateOutput(string output, int maxLength)
+    {
+        if (string.IsNullOrEmpty(output) || output.Length <= maxLength)
+            return output;
+        return output.Substring(0, maxLength) + "\n... (truncated)";
+    }
+
+    // Ollama state
+    private List<string> AvailableOllamaModels = new();
+    private bool OllamaModelsLoading = false;
+    private string? OllamaStatus = null;
+    private bool OllamaStatusIsError = false;
+    private string OllamaEndpointInput
+    {
+        get => AiService.OllamaEndpoint;
+        set => AiService.OllamaEndpoint = value;
+    }
+
     private string SelectedProvider
     {
         get => AiService.Provider.ToString();
-        set => AiService.Provider = Enum.Parse<AiProvider>(value);
+        set
+        {
+            var newProvider = Enum.Parse<AiProvider>(value);
+            if (AiService.Provider != newProvider)
+            {
+                AiService.Provider = newProvider;
+                // Clear models when provider changes, auto-refresh for Ollama providers
+                AvailableOllamaModels.Clear();
+                OllamaStatus = null;
+                if (newProvider == AiProvider.OllamaLocal || newProvider == AiProvider.Ollama)
+                {
+                    _ = RefreshOllamaModels();
+                }
+            }
+        }
     }
 
     private DrawingTool CurrentTool => CurrentToolIndex switch
@@ -503,6 +912,7 @@
                     ResizeHandle = handle;
                     DragStart = new Point(clickX, clickY);
                     OriginalBounds = SelectedElements[0].GetBounds();
+                    OriginalElementSnapshot = CloneElement(SelectedElements[0]);
                     return;
                 }
             }
@@ -748,6 +1158,7 @@
             DragStart = null;
             ResizeHandle = null;
             OriginalBounds = null;
+            OriginalElementSnapshot = null;
             return;
         }
 
@@ -969,10 +1380,14 @@
         }
 
         // Ensure minimum size
-        if (newW < 10) { newW = 10; newX = ob.X + ob.Width - 10; }
-        if (newH < 10) { newH = 10; newY = ob.Y + ob.Height - 10; }
+        if (newW < 10) { newW = 10; if (ResizeHandle.Contains('w')) newX = ob.X + ob.Width - 10; }
+        if (newH < 10) { newH = 10; if (ResizeHandle.Contains('n')) newY = ob.Y + ob.Height - 10; }
 
-        // Apply resize based on element type
+        // Calculate scale factors from ORIGINAL bounds
+        var scaleX = ob.Width > 0 ? newW / ob.Width : 1;
+        var scaleY = ob.Height > 0 ? newH / ob.Height : 1;
+
+        // Apply resize based on element type, using ORIGINAL element snapshot
         switch (el)
         {
             case RectElement rect:
@@ -998,39 +1413,31 @@
             case ImageElement img:
                 img.X = newX; img.Y = newY; img.Width = newW; img.Height = newH;
                 break;
-            case LineElement line:
-                // Scale line endpoints
-                var scaleX = newW / Math.Max(ob.Width, 1);
-                var scaleY = newH / Math.Max(ob.Height, 1);
-                line.X1 = newX + (line.X1 - ob.X) * scaleX;
-                line.Y1 = newY + (line.Y1 - ob.Y) * scaleY;
-                line.X2 = newX + (line.X2 - ob.X) * scaleX;
-                line.Y2 = newY + (line.Y2 - ob.Y) * scaleY;
+            case LineElement line when OriginalElementSnapshot is LineElement origLine:
+                // Use ORIGINAL line coords for scaling
+                line.X1 = newX + (origLine.X1 - ob.X) * scaleX;
+                line.Y1 = newY + (origLine.Y1 - ob.Y) * scaleY;
+                line.X2 = newX + (origLine.X2 - ob.X) * scaleX;
+                line.Y2 = newY + (origLine.Y2 - ob.Y) * scaleY;
                 break;
-            case ArrowElement arrow:
-                var aScaleX = newW / Math.Max(ob.Width, 1);
-                var aScaleY = newH / Math.Max(ob.Height, 1);
-                arrow.X1 = newX + (arrow.X1 - ob.X) * aScaleX;
-                arrow.Y1 = newY + (arrow.Y1 - ob.Y) * aScaleY;
-                arrow.X2 = newX + (arrow.X2 - ob.X) * aScaleX;
-                arrow.Y2 = newY + (arrow.Y2 - ob.Y) * aScaleY;
+            case ArrowElement arrow when OriginalElementSnapshot is ArrowElement origArrow:
+                arrow.X1 = newX + (origArrow.X1 - ob.X) * scaleX;
+                arrow.Y1 = newY + (origArrow.Y1 - ob.Y) * scaleY;
+                arrow.X2 = newX + (origArrow.X2 - ob.X) * scaleX;
+                arrow.Y2 = newY + (origArrow.Y2 - ob.Y) * scaleY;
                 break;
-            case TriangleElement tri:
-                var tScaleX = newW / Math.Max(ob.Width, 1);
-                var tScaleY = newH / Math.Max(ob.Height, 1);
-                tri.X1 = newX + (tri.X1 - ob.X) * tScaleX;
-                tri.Y1 = newY + (tri.Y1 - ob.Y) * tScaleY;
-                tri.X2 = newX + (tri.X2 - ob.X) * tScaleX;
-                tri.Y2 = newY + (tri.Y2 - ob.Y) * tScaleY;
-                tri.X3 = newX + (tri.X3 - ob.X) * tScaleX;
-                tri.Y3 = newY + (tri.Y3 - ob.Y) * tScaleY;
+            case TriangleElement tri when OriginalElementSnapshot is TriangleElement origTri:
+                tri.X1 = newX + (origTri.X1 - ob.X) * scaleX;
+                tri.Y1 = newY + (origTri.Y1 - ob.Y) * scaleY;
+                tri.X2 = newX + (origTri.X2 - ob.X) * scaleX;
+                tri.Y2 = newY + (origTri.Y2 - ob.Y) * scaleY;
+                tri.X3 = newX + (origTri.X3 - ob.X) * scaleX;
+                tri.Y3 = newY + (origTri.Y3 - ob.Y) * scaleY;
                 break;
-            case PathElement path:
-                var pScaleX = newW / Math.Max(ob.Width, 1);
-                var pScaleY = newH / Math.Max(ob.Height, 1);
-                path.Points = path.Points.Select(p => new Point(
-                    newX + (p.X - ob.X) * pScaleX,
-                    newY + (p.Y - ob.Y) * pScaleY
+            case PathElement path when OriginalElementSnapshot is PathElement origPath:
+                path.Points = origPath.Points.Select(p => new Point(
+                    newX + (p.X - ob.X) * scaleX,
+                    newY + (p.Y - ob.Y) * scaleY
                 )).ToList();
                 break;
             case TextElement txt:
@@ -1192,6 +1599,56 @@
         AiResult = null;
     }
 
+    private async Task RefreshOllamaModels()
+    {
+        OllamaModelsLoading = true;
+        OllamaStatus = "Connecting...";
+        OllamaStatusIsError = false;
+        StateHasChanged();
+
+        var result = await AiService.GetOllamaModelsAsync();
+
+        if (result.Success)
+        {
+            AvailableOllamaModels = result.Models;
+            if (AvailableOllamaModels.Count > 0)
+            {
+                // If current model isn't in list, select first available
+                if (!AvailableOllamaModels.Contains(AiService.OllamaModel))
+                {
+                    AiService.OllamaModel = AvailableOllamaModels[0];
+                }
+                OllamaStatus = $"Found {AvailableOllamaModels.Count} model(s)";
+                OllamaStatusIsError = false;
+            }
+            else
+            {
+                OllamaStatus = "No models found - run 'ollama pull <model>'";
+                OllamaStatusIsError = true;
+            }
+        }
+        else
+        {
+            AvailableOllamaModels.Clear();
+            OllamaStatus = result.Error ?? "Connection failed";
+            OllamaStatusIsError = true;
+        }
+
+        OllamaModelsLoading = false;
+        StateHasChanged();
+
+        // Clear success status after 3 seconds
+        if (!OllamaStatusIsError && AvailableOllamaModels.Count > 0)
+        {
+            await Task.Delay(3000);
+            if (OllamaStatus?.StartsWith("Found") == true)
+            {
+                OllamaStatus = null;
+                StateHasChanged();
+            }
+        }
+    }
+
     private async Task GenerateFromAi()
     {
         if (string.IsNullOrWhiteSpace(AiPrompt) || AiGenerating) return;
@@ -1248,6 +1705,71 @@
         }
     }
 
+    private async Task GenerateWithCascade()
+    {
+        if (string.IsNullOrWhiteSpace(AiPrompt) || AiGenerating) return;
+        if (!CanRunCascade) return;
+
+        AiGenerating = true;
+        AiError = null;
+        AiThinking = null;
+        AiResult = null;
+        CascadeStepResults.Clear();
+        CascadeTotalMs = 0;
+        StateHasChanged();
+
+        try
+        {
+            // Clear canvas if option is checked
+            if (AiClearBeforeGenerate)
+            {
+                Elements.Clear();
+                ClearSelection();
+            }
+
+            // Build API keys dictionary (Anthropic shares with AiService.ApiKey, DeepSeek doesn't need a key)
+            var apiKeys = new Dictionary<string, string>();
+            if (!string.IsNullOrEmpty(AiService.ApiKey))
+                apiKeys["anthropic"] = AiService.ApiKey;
+
+            var result = await CascadeService.ExecuteAsync(AiPrompt, apiKeys, CascadeReverse);
+
+            // Update progress display
+            CascadeStepResults = result.StepResults;
+            CascadeTotalMs = result.TotalElapsedMs;
+
+            if (!result.Success)
+            {
+                AiError = result.Error;
+                return;
+            }
+
+            AiThinking = result.Thinking;
+
+            if (result.DrawingResponse?.Commands != null && result.DrawingResponse.Commands.Count > 0)
+            {
+                AiResult = ExecuteCommands(result.DrawingResponse.Commands);
+                if (!AiResult.Success)
+                {
+                    AiError = AiResult.Error;
+                }
+            }
+            else
+            {
+                AiError = "No drawing commands returned from cascade";
+            }
+        }
+        catch (Exception ex)
+        {
+            AiError = $"Cascade error: {ex.Message}";
+        }
+        finally
+        {
+            AiGenerating = false;
+            StateHasChanged();
+        }
+    }
+
     // =====================================================
     // Command Execution API
     // =====================================================
@@ -1262,8 +1784,12 @@
         var width = (double)CanvasWidth;
         var height = (double)CanvasHeight;
         var result = _commandExecutor.Execute(commands, Elements, ref width, ref height, ref _canvasFill);
-        CanvasWidth = (int)width;
-        CanvasHeight = (int)height;
+        // Only update canvas size if not locked
+        if (!LockCanvasSize)
+        {
+            CanvasWidth = (int)width;
+            CanvasHeight = (int)height;
+        }
         StateHasChanged();
         return result;
     }
@@ -1276,8 +1802,12 @@
         var width = (double)CanvasWidth;
         var height = (double)CanvasHeight;
         var result = _commandExecutor.ExecuteJson(json, Elements, ref width, ref height, ref _canvasFill);
-        CanvasWidth = (int)width;
-        CanvasHeight = (int)height;
+        // Only update canvas size if not locked
+        if (!LockCanvasSize)
+        {
+            CanvasWidth = (int)width;
+            CanvasHeight = (int)height;
+        }
         StateHasChanged();
         return result;
     }
