@@ -89,6 +89,34 @@ public class CascadeService
             Slot3Model = "claude-sonnet-4-20250514"
         });
 
+        // Preset: OpenAI Only (#1 = OpenAI)
+        Presets.Add(new CascadeMatrixPreset
+        {
+            Name = "OpenAI Only",
+            Slot1Provider = "OpenAI",
+            Slot1Model = "gpt-4o-mini"
+        });
+
+        // Preset: Ollama → OpenAI (#1 = Ollama enhancer, #2 = OpenAI drawer)
+        Presets.Add(new CascadeMatrixPreset
+        {
+            Name = "Ollama → OpenAI",
+            Slot1Provider = "Ollama",
+            Slot1Model = "gemma3:4b",
+            Slot1Endpoint = "http://localhost:11434",
+            Slot2Provider = "OpenAI",
+            Slot2Model = "gpt-4o-mini"
+        });
+
+        // Preset: Ollama (Llama) - for users with llama models
+        Presets.Add(new CascadeMatrixPreset
+        {
+            Name = "Ollama (Llama 3.3)",
+            Slot1Provider = "Ollama",
+            Slot1Model = "llama3.3",
+            Slot1Endpoint = "http://localhost:11434"
+        });
+
         // Apply first preset as default
         ApplyPreset(Presets[0]);
     }
@@ -142,8 +170,9 @@ public class CascadeService
             {
                 if (slot.Provider == "Anthropic" && apiKeys.TryGetValue("anthropic", out var anthropicKey))
                     slot.ApiKey = anthropicKey;
-                else if (slot.Provider == "DeepSeek" && apiKeys.TryGetValue("deepseek", out var deepseekKey))
-                    slot.ApiKey = deepseekKey;
+                else if (slot.Provider == "OpenAI" && apiKeys.TryGetValue("openai", out var openaiKey))
+                    slot.ApiKey = openaiKey;
+                // DeepSeek doesn't require an API key
             }
         }
 

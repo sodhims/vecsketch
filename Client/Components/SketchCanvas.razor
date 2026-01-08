@@ -432,6 +432,13 @@
                                     <span class="key-status key-valid">Using Anthropic key from Single mode</span>
                                 </div>
                             }
+                            @if (CascadeNeedsOpenAIKey)
+                            {
+                                <div class="cascade-key-row">
+                                    <label>OpenAI Key:</label>
+                                    <input type="password" @bind="CascadeOpenAIKey" placeholder="sk-..." />
+                                </div>
+                            }
                         </div>
                     </div>
                 }
@@ -580,6 +587,7 @@
     // Cascade state
     private bool UseCascadeMode = false;
     private bool CascadeReverse = false;
+    private string CascadeOpenAIKey = "";
     private List<CascadeStepProgress> CascadeStepResults = new();
     private long CascadeTotalMs = 0;
     private int _selectedPresetIndex = 0;
@@ -631,6 +639,10 @@
             {
                 CascadeService.CurrentMatrix.Slot1.Model ??= "claude-sonnet-4-20250514";
             }
+            else if (value == "OpenAI")
+            {
+                CascadeService.CurrentMatrix.Slot1.Model ??= "gpt-4o-mini";
+            }
             else if (value == "DeepSeek")
             {
                 CascadeService.CurrentMatrix.Slot1.Model ??= "deepseek-chat";
@@ -660,6 +672,10 @@
             else if (value == "Anthropic")
             {
                 CascadeService.CurrentMatrix.Slot2.Model ??= "claude-sonnet-4-20250514";
+            }
+            else if (value == "OpenAI")
+            {
+                CascadeService.CurrentMatrix.Slot2.Model ??= "gpt-4o-mini";
             }
             else if (value == "DeepSeek")
             {
@@ -691,6 +707,10 @@
             {
                 CascadeService.CurrentMatrix.Slot3.Model ??= "claude-sonnet-4-20250514";
             }
+            else if (value == "OpenAI")
+            {
+                CascadeService.CurrentMatrix.Slot3.Model ??= "gpt-4o-mini";
+            }
             else if (value == "DeepSeek")
             {
                 CascadeService.CurrentMatrix.Slot3.Model ??= "deepseek-chat";
@@ -707,6 +727,15 @@
         }
     }
 
+    private bool CascadeNeedsOpenAIKey
+    {
+        get
+        {
+            var slots = CascadeService.CurrentMatrix.GetActiveSlots();
+            return slots.Any(s => s.Provider == "OpenAI");
+        }
+    }
+
     private bool CanRunCascade
     {
         get
@@ -715,8 +744,9 @@
             if (activeSlots.Count == 0) return false;
 
             // Check if required API keys are provided (Anthropic shares with AiService.ApiKey)
-            // DeepSeek doesn't require an API key
+            // DeepSeek and Ollama don't require API keys
             if (CascadeNeedsAnthropicKey && string.IsNullOrEmpty(AiService.ApiKey)) return false;
+            if (CascadeNeedsOpenAIKey && string.IsNullOrEmpty(CascadeOpenAIKey)) return false;
 
             return true;
         }
@@ -1730,10 +1760,12 @@
                 ClearSelection();
             }
 
-            // Build API keys dictionary (Anthropic shares with AiService.ApiKey, DeepSeek doesn't need a key)
+            // Build API keys dictionary (Anthropic shares with AiService.ApiKey, DeepSeek/Ollama don't need keys)
             var apiKeys = new Dictionary<string, string>();
             if (!string.IsNullOrEmpty(AiService.ApiKey))
                 apiKeys["anthropic"] = AiService.ApiKey;
+            if (!string.IsNullOrEmpty(CascadeOpenAIKey))
+                apiKeys["openai"] = CascadeOpenAIKey;
 
             var result = await CascadeService.ExecuteAsync(AiPrompt, apiKeys, CascadeReverse);
 
