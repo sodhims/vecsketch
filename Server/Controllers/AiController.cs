@@ -414,9 +414,14 @@ public class AiController : ControllerBase
             }
             else if (slot.Provider == "DeepSeek")
             {
-                if (string.IsNullOrEmpty(slot.ApiKey))
-                    return (false, null, "DeepSeek API key required");
+                // DeepSeek works without API key for free tier
                 output = await CallDeepSeekAsync(slot.ApiKey, slot.Model ?? "deepseek-chat", systemPrompt, prompt);
+            }
+            else if (slot.Provider == "OpenAI")
+            {
+                if (string.IsNullOrEmpty(slot.ApiKey))
+                    return (false, null, "OpenAI API key required");
+                output = await CallOpenAIAsync(slot.ApiKey, slot.Model ?? "gpt-4o-mini", systemPrompt, prompt);
             }
             else
             {
@@ -491,7 +496,7 @@ public class AiController : ControllerBase
         return doc.RootElement.GetProperty("response").GetString() ?? "";
     }
 
-    private async Task<string> CallDeepSeekAsync(string apiKey, string model, string systemPrompt, string prompt)
+    private async Task<string> CallDeepSeekAsync(string? apiKey, string model, string systemPrompt, string prompt)
     {
         var request = new
         {
@@ -505,7 +510,8 @@ public class AiController : ControllerBase
         };
 
         using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "https://api.deepseek.com/v1/chat/completions");
-        httpRequest.Headers.Add("Authorization", $"Bearer {apiKey}");
+        if (!string.IsNullOrEmpty(apiKey))
+            httpRequest.Headers.Add("Authorization", $"Bearer {apiKey}");
         httpRequest.Content = new StringContent(JsonSerializer.Serialize(request), Encoding.UTF8, "application/json");
 
         var response = await _http.SendAsync(httpRequest);
@@ -513,6 +519,37 @@ public class AiController : ControllerBase
 
         if (!response.IsSuccessStatusCode)
             throw new Exception($"DeepSeek API error: {responseBody}");
+
+        using var doc = JsonDocument.Parse(responseBody);
+        return doc.RootElement
+            .GetProperty("choices")[0]
+            .GetProperty("message")
+            .GetProperty("content")
+            .GetString() ?? "";
+    }
+
+    private async Task<string> CallOpenAIAsync(string apiKey, string model, string systemPrompt, string prompt)
+    {
+        var request = new
+        {
+            model = model,
+            messages = new[]
+            {
+                new { role = "system", content = systemPrompt },
+                new { role = "user", content = prompt }
+            },
+            max_tokens = 4096
+        };
+
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "https://api.openai.com/v1/chat/completions");
+        httpRequest.Headers.Add("Authorization", $"Bearer {apiKey}");
+        httpRequest.Content = new StringContent(JsonSerializer.Serialize(request), Encoding.UTF8, "application/json");
+
+        var response = await _http.SendAsync(httpRequest);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+            throw new Exception($"OpenAI API error: {responseBody}");
 
         using var doc = JsonDocument.Parse(responseBody);
         return doc.RootElement
