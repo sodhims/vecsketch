@@ -176,6 +176,22 @@
                 <rect x="@(b.X + b.Width + 4 - hs)" y="@(b.Y + b.Height / 2 - hs)" width="@handleSize" height="@handleSize" fill="#fff" stroke="#0066ff" stroke-width="1" class="resize-handle" data-handle="e" />
             }
         }
+
+        @if (ChainMode)
+        {
+            <!-- Chain mode indicators -->
+            @if (ChainStartPoint != null)
+            {
+                <!-- Start point marker (click here to close) -->
+                <circle cx="@ChainStartPoint.X" cy="@ChainStartPoint.Y" r="8" fill="none" stroke="#00cc00" stroke-width="2" stroke-dasharray="3 2" />
+                <circle cx="@ChainStartPoint.X" cy="@ChainStartPoint.Y" r="3" fill="#00cc00" />
+            }
+            @if (ChainLastPoint != null)
+            {
+                <!-- Last endpoint marker (next shape starts here) -->
+                <circle cx="@ChainLastPoint.X" cy="@ChainLastPoint.Y" r="6" fill="@StrokeColor" stroke="#fff" stroke-width="2" />
+            }
+        }
     </svg>
 
     @if (ShowTextInput)
@@ -556,7 +572,7 @@
     private Point? TextPosition;
 
     // Input detection
-    private string InputHint = "Mouse ready [V=Select, P=Pencil, L=Line, R=Rect, C=Circle, E=Ellipse, T=Triangle, G=Polygon, S=Star, A=Arrow, X=Text]";
+    private string InputHint = "Mouse ready [S=Select, P=Pencil, L=Line, R=Rect, C=Circle, E=Ellipse, T=Triangle, G=Polygon, A=Arrow, X=Text, K=Chain]";
     private double CurrentPressure = 1.0;
 
     // Selection state
@@ -572,6 +588,11 @@
     private string? ResizeHandle; // "nw", "ne", "sw", "se", "n", "s", "e", "w"
     private BoundingBox? OriginalBounds;
     private VectorElement? OriginalElementSnapshot; // Store original element state for resize
+
+    // Chain mode - successive clicks continue from last endpoint
+    private bool ChainMode = false;
+    private Point? ChainStartPoint; // Original start point to close the chain
+    private Point? ChainLastPoint;  // Last endpoint to continue from
 
     // AI Drawing state
     private bool ShowAiPanel = false;
@@ -1017,60 +1038,78 @@
         }
 
         IsDrawing = true;
-        StartPoint = new Point(e.OffsetX, e.OffsetY);
+
+        // Chain mode: use last endpoint as start, or clicked point for first element
+        double startX, startY;
+        if (ChainMode && ChainLastPoint != null)
+        {
+            startX = ChainLastPoint.X;
+            startY = ChainLastPoint.Y;
+        }
+        else
+        {
+            startX = e.OffsetX;
+            startY = e.OffsetY;
+            // Record the original start point for closing the chain
+            if (ChainMode && ChainStartPoint == null)
+            {
+                ChainStartPoint = new Point(startX, startY);
+            }
+        }
+        StartPoint = new Point(startX, startY);
 
         CurrentElement = CurrentTool switch
         {
             DrawingTool.Line => new LineElement
             {
-                X1 = e.OffsetX, Y1 = e.OffsetY,
+                X1 = startX, Y1 = startY,
                 X2 = e.OffsetX, Y2 = e.OffsetY,
                 Stroke = StrokeColor, StrokeWidth = StrokeWidth
             },
             DrawingTool.Pencil => new PathElement
             {
                 Points = new List<Point> { StartPoint },
-                Stroke = StrokeColor, 
+                Stroke = StrokeColor,
                 StrokeWidth = StrokeWidth * CurrentPressure, // Apply pressure
                 Pressure = CurrentPressure
             },
             DrawingTool.Rectangle => new RectElement
             {
-                X = e.OffsetX, Y = e.OffsetY,
+                X = startX, Y = startY,
                 Stroke = StrokeColor, StrokeWidth = StrokeWidth, Fill = GetFill()
             },
             DrawingTool.Circle => new CircleElement
             {
-                Cx = e.OffsetX, Cy = e.OffsetY,
+                Cx = startX, Cy = startY,
                 Stroke = StrokeColor, StrokeWidth = StrokeWidth, Fill = GetFill()
             },
             DrawingTool.Ellipse => new EllipseElement
             {
-                Cx = e.OffsetX, Cy = e.OffsetY,
+                Cx = startX, Cy = startY,
                 Stroke = StrokeColor, StrokeWidth = StrokeWidth, Fill = GetFill()
             },
             DrawingTool.Triangle => new TriangleElement
             {
-                X1 = e.OffsetX, Y1 = e.OffsetY,
-                X2 = e.OffsetX, Y2 = e.OffsetY,
-                X3 = e.OffsetX, Y3 = e.OffsetY,
+                X1 = startX, Y1 = startY,
+                X2 = startX, Y2 = startY,
+                X3 = startX, Y3 = startY,
                 Stroke = StrokeColor, StrokeWidth = StrokeWidth, Fill = GetFill()
             },
             DrawingTool.Polygon => new PolygonElement
             {
-                Cx = e.OffsetX, Cy = e.OffsetY,
+                Cx = startX, Cy = startY,
                 Sides = PolygonSides,
                 Stroke = StrokeColor, StrokeWidth = StrokeWidth, Fill = GetFill()
             },
             DrawingTool.Star => new StarElement
             {
-                Cx = e.OffsetX, Cy = e.OffsetY,
+                Cx = startX, Cy = startY,
                 Points = StarPoints,
                 Stroke = StrokeColor, StrokeWidth = StrokeWidth, Fill = GetFill()
             },
             DrawingTool.Arrow => new ArrowElement
             {
-                X1 = e.OffsetX, Y1 = e.OffsetY,
+                X1 = startX, Y1 = startY,
                 X2 = e.OffsetX, Y2 = e.OffsetY,
                 Stroke = StrokeColor, StrokeWidth = StrokeWidth
             },
@@ -1221,6 +1260,25 @@
         if (IsDrawing && CurrentElement != null)
         {
             Elements.Add(CurrentElement);
+
+            // Chain mode: continue from endpoint
+            if (ChainMode)
+            {
+                var endpoint = GetElementEndpoint(CurrentElement);
+                if (endpoint != null)
+                {
+                    // Check if clicked near start point to close the chain
+                    if (ChainStartPoint != null && IsNearPoint(endpoint.X, endpoint.Y, ChainStartPoint.X, ChainStartPoint.Y))
+                    {
+                        EndChainMode();
+                    }
+                    else
+                    {
+                        ChainLastPoint = endpoint;
+                    }
+                }
+            }
+
             CurrentElement = null;
         }
         IsDrawing = false;
@@ -1247,7 +1305,7 @@
         // Tool shortcuts (single key)
         switch (e.Key.ToLower())
         {
-            case "v": CurrentToolIndex = 0; break; // Select
+            case "s": CurrentToolIndex = 0; ChainMode = false; break; // Select
             case "l": CurrentToolIndex = 1; break; // Line
             case "p": CurrentToolIndex = 2; break; // Pencil
             case "r": CurrentToolIndex = 3; break; // Rectangle
@@ -1255,15 +1313,36 @@
             case "e": CurrentToolIndex = 5; break; // Ellipse
             case "t": CurrentToolIndex = 6; break; // Triangle
             case "g": CurrentToolIndex = 7; break; // polyGon
-            case "s": CurrentToolIndex = 8; break; // Star
+            // Star has no shortcut (use toolbar)
             case "a": CurrentToolIndex = 9; break; // Arrow
             case "x": CurrentToolIndex = 10; break; // teXt
+            case "k":
+                // Chain mode toggle
+                ChainMode = !ChainMode;
+                if (ChainMode)
+                {
+                    ChainStartPoint = null;
+                    ChainLastPoint = null;
+                    InputHint = "Chain mode ON - click to start, clicks continue from endpoint, click start or ESC to end";
+                }
+                else
+                {
+                    EndChainMode();
+                }
+                break;
             case "delete":
             case "backspace":
                 DeleteSelected();
                 break;
             case "escape":
-                ClearSelection();
+                if (ChainMode)
+                {
+                    EndChainMode();
+                }
+                else
+                {
+                    ClearSelection();
+                }
                 break;
         }
         StateHasChanged();
@@ -1291,6 +1370,36 @@
         foreach (var el in SelectedElements)
             Elements.Remove(el);
         SelectedElements.Clear();
+    }
+
+    private void EndChainMode()
+    {
+        ChainMode = false;
+        ChainStartPoint = null;
+        ChainLastPoint = null;
+        InputHint = "Mouse ready [S=Select, P=Pencil, L=Line, R=Rect, C=Circle, E=Ellipse, T=Triangle, G=Polygon, A=Arrow, X=Text, K=Chain]";
+    }
+
+    private bool IsNearPoint(double x1, double y1, double x2, double y2, double threshold = 10)
+    {
+        return Math.Abs(x1 - x2) < threshold && Math.Abs(y1 - y2) < threshold;
+    }
+
+    private Point? GetElementEndpoint(VectorElement el)
+    {
+        return el switch
+        {
+            LineElement line => new Point(line.X2, line.Y2),
+            ArrowElement arrow => new Point(arrow.X2, arrow.Y2),
+            PathElement path => path.Points.LastOrDefault(),
+            RectElement rect => new Point(rect.X + rect.Width, rect.Y + rect.Height),
+            CircleElement circle => new Point(circle.Cx + circle.Radius, circle.Cy),
+            EllipseElement ellipse => new Point(ellipse.Cx + ellipse.Rx, ellipse.Cy),
+            TriangleElement tri => new Point(tri.X3, tri.Y3),
+            PolygonElement poly => new Point(poly.Cx + poly.Radius, poly.Cy),
+            StarElement star => new Point(star.Cx + star.OuterRadius, star.Cy),
+            _ => null
+        };
     }
 
     private void CloseTextInput()
