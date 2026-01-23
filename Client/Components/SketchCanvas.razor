@@ -106,20 +106,27 @@
             <button class="btn btn-sm btn-outline-light" @onclick="OnClearClick">Clear</button>
             <button class="btn btn-sm btn-outline-light" @onclick="OnUndoClick">Undo</button>
             <button class="btn btn-sm btn-outline-light" @onclick="OnExportClick">Export</button>
+            <button class="btn btn-sm btn-outline-light" @onclick="OnImportClick" disabled="@IsImporting">
+                @(IsImporting ? "Importing..." : "Import")
+            </button>
         </div>
     </div>
 
+    <input type="file" @ref="fileInputElement" accept=".ai,.pdf,.png,.jpg,.jpeg,.gif,.webp,.bmp,.svg" style="display: none;" @onchange="OnFileSelected" />
+
     <div class="canvas-info">
-        <span>Elements: @Elements.Count / @MaxElements</span>
-        <div class="progress" style="width: 200px; height: 20px;">
+        <span>@Elements.Count/@MaxElements</span>
+        <div class="progress" style="width: 80px; height: 8px;">
             <div class="progress-bar" role="progressbar" style="width: @GetProgressPercent()%"></div>
         </div>
         <span class="input-hint">@InputHint</span>
     </div>
 
     <svg @ref="svgElement"
-         width="@CanvasWidth"
-         height="@CanvasHeight"
+         width="100%"
+         height="100%"
+         viewBox="0 0 @CanvasWidth @CanvasHeight"
+         preserveAspectRatio="xMidYMid meet"
          class="canvas"
          @onpointerdown="OnPointerDown"
          @onpointermove="OnPointerMove"
@@ -237,6 +244,10 @@
             </div>
             <div class="prop-row">
                 <button class="btn btn-sm btn-outline-primary" @onclick="BringToFront">To Front</button>
+                <button class="btn btn-sm btn-outline-primary" @onclick="BringForward">Forward</button>
+            </div>
+            <div class="prop-row">
+                <button class="btn btn-sm btn-outline-primary" @onclick="SendBackward">Backward</button>
                 <button class="btn btn-sm btn-outline-primary" @onclick="SendToBack">To Back</button>
             </div>
             <div class="prop-row">
@@ -542,11 +553,16 @@
     </div>
 </div>
 
+@inject HttpClient Http
+
 @code {
     private ElementReference svgElement;
     private ElementReference containerElement;
     private ElementReference textInputElement;
+    private ElementReference fileInputElement;
     private List<VectorElement> Elements = new();
+    private bool IsImporting = false;
+    private string? ImportMessage;
     private VectorElement? CurrentElement;
     private bool IsDrawing;
     private Point? StartPoint;
@@ -588,6 +604,10 @@
     private string? ResizeHandle; // "nw", "ne", "sw", "se", "n", "s", "e", "w"
     private BoundingBox? OriginalBounds;
     private VectorElement? OriginalElementSnapshot; // Store original element state for resize
+
+    // Undo stack - stores JSON snapshots of Elements list
+    private Stack<string> UndoStack = new();
+    private const int MaxUndoSteps = 50;
 
     // Chain mode - successive clicks continue from last endpoint
     private bool ChainMode = false;
@@ -880,8 +900,85 @@
     private string GetFill() => UseFill ? FillColor : "none";
 
     private void OnPasteClick() => _ = JS.InvokeVoidAsync("pasteFromClipboard");
-    private void OnClearClick() { Elements.Clear(); }
-    private void OnUndoClick() { if (Elements.Count > 0) Elements.RemoveAt(Elements.Count - 1); }
+    private void OnClearClick() { SaveUndoState(); Elements.Clear(); ClearSelection(); StateHasChanged(); }
+    private void OnUndoClick() { Undo(); }
+
+    private void SaveUndoState()
+    {
+        // Serialize current state to JSON
+        var snapshot = SerializeElements();
+        UndoStack.Push(snapshot);
+
+        // Limit stack size
+        if (UndoStack.Count > MaxUndoSteps)
+        {
+            var temp = UndoStack.ToArray();
+            UndoStack.Clear();
+            for (int i = 0; i < MaxUndoSteps; i++)
+                UndoStack.Push(temp[MaxUndoSteps - 1 - i]);
+        }
+    }
+
+    private void Undo()
+    {
+        if (UndoStack.Count == 0) return;
+
+        var snapshot = UndoStack.Pop();
+        DeserializeElements(snapshot);
+        ClearSelection();
+        StateHasChanged();
+    }
+
+    private string SerializeElements()
+    {
+        var data = Elements.Select(e => new ElementData
+        {
+            Type = e.GetType().Name,
+            Stroke = e.Stroke,
+            StrokeWidth = e.StrokeWidth,
+            Fill = e.Fill,
+            Json = System.Text.Json.JsonSerializer.Serialize(e, e.GetType())
+        }).ToList();
+        return System.Text.Json.JsonSerializer.Serialize(data);
+    }
+
+    private void DeserializeElements(string snapshot)
+    {
+        var data = System.Text.Json.JsonSerializer.Deserialize<List<ElementData>>(snapshot);
+        if (data == null) return;
+
+        Elements.Clear();
+        foreach (var item in data)
+        {
+            VectorElement? el = item.Type switch
+            {
+                "LineElement" => System.Text.Json.JsonSerializer.Deserialize<LineElement>(item.Json),
+                "PathElement" => System.Text.Json.JsonSerializer.Deserialize<PathElement>(item.Json),
+                "RectElement" => System.Text.Json.JsonSerializer.Deserialize<RectElement>(item.Json),
+                "CircleElement" => System.Text.Json.JsonSerializer.Deserialize<CircleElement>(item.Json),
+                "EllipseElement" => System.Text.Json.JsonSerializer.Deserialize<EllipseElement>(item.Json),
+                "TriangleElement" => System.Text.Json.JsonSerializer.Deserialize<TriangleElement>(item.Json),
+                "PolygonElement" => System.Text.Json.JsonSerializer.Deserialize<PolygonElement>(item.Json),
+                "StarElement" => System.Text.Json.JsonSerializer.Deserialize<StarElement>(item.Json),
+                "ArrowElement" => System.Text.Json.JsonSerializer.Deserialize<ArrowElement>(item.Json),
+                "ImageElement" => System.Text.Json.JsonSerializer.Deserialize<ImageElement>(item.Json),
+                "TextElement" => System.Text.Json.JsonSerializer.Deserialize<TextElement>(item.Json),
+                "SvgPathElement" => System.Text.Json.JsonSerializer.Deserialize<SvgPathElement>(item.Json),
+                _ => null
+            };
+            if (el != null)
+                Elements.Add(el);
+        }
+    }
+
+    private class ElementData
+    {
+        public string Type { get; set; } = "";
+        public string Stroke { get; set; } = "";
+        public double StrokeWidth { get; set; }
+        public string Fill { get; set; } = "";
+        public string Json { get; set; } = "";
+    }
 
     private async Task OnTouchToggleChange(ChangeEventArgs e)
     {
@@ -895,6 +992,285 @@
 {string.Join("\n", Elements.Select(e => "  " + e.ToSvg()))}
 </svg>";
         await JS.InvokeVoidAsync("downloadSvg", svg, "sketch.svg");
+    }
+
+    private async Task OnImportClick()
+    {
+        await JS.InvokeVoidAsync("triggerFileInput", fileInputElement);
+    }
+
+    private static readonly string[] ImageExtensions = { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg" };
+
+    private async Task OnFileSelected(ChangeEventArgs e)
+    {
+        var fileInput = e.Value?.ToString();
+        if (string.IsNullOrEmpty(fileInput)) return;
+
+        IsImporting = true;
+        ImportMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            // Get the file from JavaScript
+            var fileData = await JS.InvokeAsync<FileData>("getSelectedFile", fileInputElement);
+            if (fileData == null || fileData.Data == null)
+            {
+                ImportMessage = "Could not read file";
+                return;
+            }
+
+            var extension = Path.GetExtension(fileData.Name).ToLowerInvariant();
+
+            // Handle image files directly (no server needed)
+            if (ImageExtensions.Contains(extension))
+            {
+                await ImportImageFile(fileData, extension);
+                return;
+            }
+
+            // Handle AI/PDF files via server
+            using var content = new MultipartFormDataContent();
+            var bytes = Convert.FromBase64String(fileData.Data);
+            var fileContent = new ByteArrayContent(bytes);
+            fileContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
+            content.Add(fileContent, "file", fileData.Name);
+
+            var response = await Http.PostAsync("api/import/ai", content);
+            var result = await response.Content.ReadFromJsonAsync<ImportResult>();
+
+            if (result != null && result.Success && result.Elements.Count > 0)
+            {
+                // Calculate bounding box of all imported elements
+                var allBounds = CalculateImportBounds(result.Elements);
+
+                // Calculate scale to fit canvas with padding
+                var padding = 50.0;
+                var availableWidth = CanvasWidth - padding * 2;
+                var availableHeight = CanvasHeight - padding * 2;
+                var scaleX = allBounds.Width > 0 ? availableWidth / allBounds.Width : 1;
+                var scaleY = allBounds.Height > 0 ? availableHeight / allBounds.Height : 1;
+                var scale = Math.Min(scaleX, scaleY);
+                scale = Math.Min(scale, 2.0); // Don't scale up more than 2x
+
+                // Calculate offset to center
+                var offsetX = padding - allBounds.MinX * scale + (availableWidth - allBounds.Width * scale) / 2;
+                var offsetY = padding - allBounds.MinY * scale + (availableHeight - allBounds.Height * scale) / 2;
+
+                // Add imported elements with transformation
+                foreach (var el in result.Elements)
+                {
+                    var element = ConvertImportedElement(el, scale, offsetX, offsetY);
+                    if (element != null)
+                        Elements.Add(element);
+                }
+                ImportMessage = result.Message;
+            }
+            else
+            {
+                ImportMessage = result?.Message ?? "Import failed";
+            }
+        }
+        catch (Exception ex)
+        {
+            ImportMessage = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            IsImporting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ImportImageFile(FileData fileData, string extension)
+    {
+        try
+        {
+            // Get image dimensions from JavaScript
+            var mimeType = extension switch
+            {
+                ".png" => "image/png",
+                ".jpg" or ".jpeg" => "image/jpeg",
+                ".gif" => "image/gif",
+                ".webp" => "image/webp",
+                ".bmp" => "image/bmp",
+                ".svg" => "image/svg+xml",
+                _ => "image/png"
+            };
+
+            var dataUrl = $"data:{mimeType};base64,{fileData.Data}";
+            var dimensions = await JS.InvokeAsync<ImageDimensions>("getImageDimensions", dataUrl);
+
+            if (dimensions == null || dimensions.Width == 0 || dimensions.Height == 0)
+            {
+                ImportMessage = "Could not read image dimensions";
+                return;
+            }
+
+            // Scale image to fit canvas if too large
+            var scale = 1.0;
+            var maxWidth = CanvasWidth * 0.8;
+            var maxHeight = CanvasHeight * 0.8;
+
+            if (dimensions.Width > maxWidth)
+                scale = maxWidth / dimensions.Width;
+            if (dimensions.Height * scale > maxHeight)
+                scale = maxHeight / dimensions.Height;
+
+            var scaledWidth = dimensions.Width * scale;
+            var scaledHeight = dimensions.Height * scale;
+
+            var imageElement = new ImageElement
+            {
+                X = (CanvasWidth - scaledWidth) / 2,
+                Y = (CanvasHeight - scaledHeight) / 2,
+                Width = scaledWidth,
+                Height = scaledHeight,
+                DataUrl = dataUrl
+            };
+
+            Elements.Add(imageElement);
+            ImportMessage = $"Imported {fileData.Name}";
+        }
+        finally
+        {
+            IsImporting = false;
+            StateHasChanged();
+        }
+    }
+
+    private class ImageDimensions
+    {
+        public int Width { get; set; }
+        public int Height { get; set; }
+    }
+
+    private (double MinX, double MinY, double Width, double Height) CalculateImportBounds(List<ImportedElement> elements)
+    {
+        double minX = double.MaxValue, minY = double.MaxValue;
+        double maxX = double.MinValue, maxY = double.MinValue;
+
+        foreach (var el in elements)
+        {
+            if (el.Type == "path" && !string.IsNullOrEmpty(el.D))
+            {
+                var pathBounds = ParsePathBoundsSimple(el.D);
+                minX = Math.Min(minX, pathBounds.minX);
+                minY = Math.Min(minY, pathBounds.minY);
+                maxX = Math.Max(maxX, pathBounds.maxX);
+                maxY = Math.Max(maxY, pathBounds.maxY);
+            }
+            else if (el.Type == "rect" || el.Type == "image")
+            {
+                minX = Math.Min(minX, el.X);
+                minY = Math.Min(minY, el.Y);
+                maxX = Math.Max(maxX, el.X + el.Width);
+                maxY = Math.Max(maxY, el.Y + el.Height);
+            }
+        }
+
+        if (minX == double.MaxValue) return (0, 0, 100, 100);
+        return (minX, minY, maxX - minX, maxY - minY);
+    }
+
+    private (double minX, double minY, double maxX, double maxY) ParsePathBoundsSimple(string d)
+    {
+        double minX = double.MaxValue, minY = double.MaxValue;
+        double maxX = double.MinValue, maxY = double.MinValue;
+
+        // Simple regex to find all numbers in the path
+        var numbers = System.Text.RegularExpressions.Regex.Matches(d, @"-?\d+\.?\d*");
+        for (int i = 0; i < numbers.Count - 1; i += 2)
+        {
+            if (double.TryParse(numbers[i].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var x) &&
+                double.TryParse(numbers[i + 1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var y))
+            {
+                minX = Math.Min(minX, x);
+                minY = Math.Min(minY, y);
+                maxX = Math.Max(maxX, x);
+                maxY = Math.Max(maxY, y);
+            }
+        }
+
+        if (minX == double.MaxValue) return (0, 0, 100, 100);
+        return (minX, minY, maxX, maxY);
+    }
+
+    private VectorElement? ConvertImportedElement(ImportedElement el, double scale, double offsetX, double offsetY)
+    {
+        return el.Type switch
+        {
+            "path" when !string.IsNullOrEmpty(el.D) => new SvgPathElement
+            {
+                D = TransformPath(el.D, scale, offsetX, offsetY),
+                Stroke = el.Stroke,
+                StrokeWidth = el.StrokeWidth * scale,
+                Fill = el.Fill
+            },
+            "rect" => new RectElement
+            {
+                X = el.X * scale + offsetX,
+                Y = el.Y * scale + offsetY,
+                Width = el.Width * scale,
+                Height = el.Height * scale,
+                Stroke = el.Stroke,
+                StrokeWidth = el.StrokeWidth * scale,
+                Fill = el.Fill
+            },
+            "image" when !string.IsNullOrEmpty(el.DataUrl) => new ImageElement
+            {
+                X = el.X * scale + offsetX,
+                Y = el.Y * scale + offsetY,
+                Width = el.Width * scale,
+                Height = el.Height * scale,
+                DataUrl = el.DataUrl
+            },
+            _ => null
+        };
+    }
+
+    private string TransformPath(string d, double scale, double offsetX, double offsetY)
+    {
+        // Transform all coordinates in the path
+        var result = System.Text.RegularExpressions.Regex.Replace(d, @"(-?\d+\.?\d*)\s+(-?\d+\.?\d*)", match =>
+        {
+            if (double.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var x) &&
+                double.TryParse(match.Groups[2].Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var y))
+            {
+                var newX = x * scale + offsetX;
+                var newY = y * scale + offsetY;
+                return $"{newX:F2} {newY:F2}";
+            }
+            return match.Value;
+        });
+        return result;
+    }
+
+    private class FileData
+    {
+        public string Name { get; set; } = "";
+        public string? Data { get; set; }
+    }
+
+    private class ImportResult
+    {
+        public bool Success { get; set; }
+        public List<ImportedElement> Elements { get; set; } = new();
+        public string Message { get; set; } = "";
+    }
+
+    private class ImportedElement
+    {
+        public string Type { get; set; } = "";
+        public string? D { get; set; }
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
+        public string? DataUrl { get; set; }
+        public string Stroke { get; set; } = "#000000";
+        public double StrokeWidth { get; set; } = 1;
+        public string Fill { get; set; } = "none";
     }
 
     private string GetPointerType(PointerEventArgs e)
@@ -962,6 +1338,7 @@
                 var handle = GetResizeHandleAt(clickX, clickY);
                 if (handle != null)
                 {
+                    SaveUndoState();
                     IsResizing = true;
                     ResizeHandle = handle;
                     DragStart = new Point(clickX, clickY);
@@ -979,6 +1356,7 @@
                     if (sel.HitTest(clickX, clickY))
                     {
                         // Start moving
+                        SaveUndoState();
                         IsMoving = true;
                         DragStart = new Point(clickX, clickY);
                         return;
@@ -1012,6 +1390,7 @@
                 // Start moving immediately after selecting
                 if (hitElement.IsSelected)
                 {
+                    SaveUndoState();
                     IsMoving = true;
                     DragStart = new Point(clickX, clickY);
                 }
@@ -1259,6 +1638,7 @@
 
         if (IsDrawing && CurrentElement != null)
         {
+            SaveUndoState();
             Elements.Add(CurrentElement);
 
             // Chain mode: continue from endpoint
@@ -1367,6 +1747,8 @@
 
     private void DeleteSelected()
     {
+        if (SelectedElements.Count == 0) return;
+        SaveUndoState();
         foreach (var el in SelectedElements)
             Elements.Remove(el);
         SelectedElements.Clear();
@@ -1604,6 +1986,7 @@
 
     private void OnSelectedStrokeChange(ChangeEventArgs e)
     {
+        SaveUndoState();
         var color = e.Value?.ToString() ?? "#000000";
         foreach (var el in SelectedElements)
             el.Stroke = color;
@@ -1611,6 +1994,7 @@
 
     private void OnSelectedStrokeWidthChange(ChangeEventArgs e)
     {
+        SaveUndoState();
         var index = int.Parse(e.Value?.ToString() ?? "1");
         var width = index switch { 0 => 1.0, 1 => 2.0, 2 => 4.0, 3 => 6.0, 4 => 8.0, 5 => 12.0, _ => 2.0 };
         foreach (var el in SelectedElements)
@@ -1619,6 +2003,7 @@
 
     private void OnSelectedFillChange(ChangeEventArgs e)
     {
+        SaveUndoState();
         var color = e.Value?.ToString() ?? "#ffffff";
         foreach (var el in SelectedElements)
             el.Fill = color;
@@ -1626,12 +2011,14 @@
 
     private void ClearSelectedFill()
     {
+        SaveUndoState();
         foreach (var el in SelectedElements)
             el.Fill = "none";
     }
 
     private void BringToFront()
     {
+        SaveUndoState();
         foreach (var el in SelectedElements)
         {
             Elements.Remove(el);
@@ -1641,14 +2028,54 @@
 
     private void SendToBack()
     {
+        SaveUndoState();
         var toMove = SelectedElements.ToList();
         foreach (var el in toMove)
             Elements.Remove(el);
         Elements.InsertRange(0, toMove);
     }
 
+    private void BringForward()
+    {
+        SaveUndoState();
+        // Process in reverse order of index to avoid shifting issues
+        var sortedByIndex = SelectedElements
+            .Select(el => (el, index: Elements.IndexOf(el)))
+            .OrderByDescending(x => x.index)
+            .ToList();
+
+        foreach (var (el, index) in sortedByIndex)
+        {
+            if (index < Elements.Count - 1)
+            {
+                Elements.RemoveAt(index);
+                Elements.Insert(index + 1, el);
+            }
+        }
+    }
+
+    private void SendBackward()
+    {
+        SaveUndoState();
+        // Process in order of index to avoid shifting issues
+        var sortedByIndex = SelectedElements
+            .Select(el => (el, index: Elements.IndexOf(el)))
+            .OrderBy(x => x.index)
+            .ToList();
+
+        foreach (var (el, index) in sortedByIndex)
+        {
+            if (index > 0)
+            {
+                Elements.RemoveAt(index);
+                Elements.Insert(index - 1, el);
+            }
+        }
+    }
+
     private void DuplicateSelected()
     {
+        SaveUndoState();
         var newElements = new List<VectorElement>();
         foreach (var el in SelectedElements)
         {
