@@ -453,6 +453,106 @@ test.describe('Element Recording and Playback', () => {
         expect(optionCount).toBe(1);
     });
 
+    test('should open recording editor', async ({ page }) => {
+        const canvas = page.locator('svg.canvas');
+        await expect(canvas).toBeVisible();
+        const box = await canvas.boundingBox();
+        if (!box) throw new Error('Canvas not found');
+
+        // Open recording panel
+        await page.click('button:has-text("Record")');
+        await page.waitForSelector('.recording-panel');
+
+        // Create and save a recording
+        await page.fill('.recording-name-input', 'Editor Test');
+        await page.click('button:has-text("Start Recording")');
+        await page.waitForTimeout(200);
+
+        // Draw a few shapes
+        await selectTool(page, '3');
+        for (let i = 0; i < 3; i++) {
+            await page.mouse.move(box.x + 50 + i * 100, box.y + 50);
+            await page.mouse.down();
+            await page.mouse.move(box.x + 100 + i * 100, box.y + 100);
+            await page.mouse.up();
+            await page.waitForTimeout(150);
+        }
+
+        await page.click('button:has-text("Stop")');
+        await page.click('button:has-text("Save")');
+        await page.waitForTimeout(300);
+
+        // Click edit button
+        const editBtn = page.locator('.saved-recording-item:has-text("Editor Test") button[title="Edit"]');
+        await expect(editBtn).toBeVisible();
+        await editBtn.click();
+
+        // Editor should open
+        await expect(page.locator('.recording-editor')).toBeVisible();
+        await expect(page.locator('.editor-header:has-text("Edit Recording")')).toBeVisible();
+
+        // Should show 3 actions
+        const actionRows = page.locator('.action-row');
+        expect(await actionRows.count()).toBe(3);
+
+        // Should have toolbar buttons
+        await expect(page.locator('button:has-text("Normalize Gaps")')).toBeVisible();
+        await expect(page.locator('button:has-text("0.5×")')).toBeVisible();
+        await expect(page.locator('button:has-text("2×")')).toBeVisible();
+        await expect(page.locator('button:has-text("Test")')).toBeVisible();
+
+        // Close editor
+        await page.click('.editor-footer button:has-text("Cancel")');
+        await expect(page.locator('.recording-editor')).not.toBeVisible();
+    });
+
+    test('should delete action in editor', async ({ page }) => {
+        const canvas = page.locator('svg.canvas');
+        await expect(canvas).toBeVisible();
+        const box = await canvas.boundingBox();
+        if (!box) throw new Error('Canvas not found');
+
+        // Create and save a recording with 3 shapes
+        await page.click('button:has-text("Record")');
+        await page.waitForSelector('.recording-panel');
+        await page.fill('.recording-name-input', 'Delete Action Test');
+        await page.click('button:has-text("Start Recording")');
+        await page.waitForTimeout(200);
+
+        await selectTool(page, '4'); // Circle
+        for (let i = 0; i < 3; i++) {
+            await page.mouse.move(box.x + 100 + i * 120, box.y + 100);
+            await page.mouse.down();
+            await page.mouse.move(box.x + 150 + i * 120, box.y + 150);
+            await page.mouse.up();
+            await page.waitForTimeout(150);
+        }
+
+        await page.click('button:has-text("Stop")');
+        await page.click('button:has-text("Save")');
+        await page.waitForTimeout(300);
+
+        // Open editor
+        await page.click('.saved-recording-item:has-text("Delete Action Test") button[title="Edit"]');
+        await expect(page.locator('.recording-editor')).toBeVisible();
+
+        // Should have 3 actions
+        expect(await page.locator('.action-row').count()).toBe(3);
+
+        // Delete the second action
+        await page.locator('.action-row').nth(1).locator('button[title="Delete"]').click();
+
+        // Should now have 2 actions
+        expect(await page.locator('.action-row').count()).toBe(2);
+
+        // Save changes
+        await page.click('button:has-text("Save Changes")');
+        await expect(page.locator('.recording-editor')).not.toBeVisible();
+
+        // Verify the recording was updated (should show 2 actions)
+        await expect(page.locator('.saved-recording-item:has-text("Delete Action Test") .rec-info:has-text("2 actions")')).toBeVisible();
+    });
+
     test('should record and replay 5 arrows', async ({ page }) => {
         const canvas = page.locator('svg.canvas');
         await expect(canvas).toBeVisible();

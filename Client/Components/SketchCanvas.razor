@@ -493,6 +493,7 @@
                                 </div>
                                 <div class="rec-actions">
                                     <button class="btn btn-xs btn-primary" title="Play" @onclick="() => StartReplay(rec)" disabled="@(IsRecording || IsReplaying)">▶</button>
+                                    <button class="btn btn-xs btn-warning" title="Edit" @onclick="() => OpenRecordingEditor(rec)" disabled="@(IsRecording || IsReplaying)">✎</button>
                                     <button class="btn btn-xs btn-secondary" title="Export JSON" @onclick="() => ExportRecordingJson(rec)">↓</button>
                                     <button class="btn btn-xs btn-danger" title="Delete" @onclick="() => DeleteRecording(rec)" disabled="@(IsRecording || IsReplaying)">×</button>
                                 </div>
@@ -503,6 +504,68 @@
                     {
                         <span class="no-recordings">No saved recordings yet</span>
                     }
+                </div>
+            </div>
+        </div>
+    }
+
+    @* Recording Editor Panel *@
+    @if (ShowRecordingEditor && EditingRecording != null)
+    {
+        <div class="recording-editor-overlay" @onclick="CloseRecordingEditor"></div>
+        <div class="recording-editor" @onclick:stopPropagation="true">
+            <div class="editor-header">
+                <span>Edit Recording: @EditingRecording.Name</span>
+                <button class="btn btn-sm btn-close" @onclick="CloseRecordingEditor">×</button>
+            </div>
+            <div class="editor-content">
+                <div class="editor-info">
+                    <span>@EditingRecording.Actions.Count actions</span>
+                    <span>Duration: @((EditingRecording.DurationMs / 1000.0).ToString("F1"))s</span>
+                </div>
+                <div class="editor-toolbar">
+                    <button class="btn btn-xs btn-secondary" @onclick="NormalizeGaps" title="Even out timing gaps">Normalize Gaps</button>
+                    <button class="btn btn-xs btn-secondary" @onclick="() => ScaleTiming(0.5)" title="Half speed">0.5×</button>
+                    <button class="btn btn-xs btn-secondary" @onclick="() => ScaleTiming(2.0)" title="Double speed">2×</button>
+                    <button class="btn btn-xs btn-primary" @onclick="TestPlayEdited" disabled="@IsReplaying">▶ Test</button>
+                </div>
+                <div class="editor-actions-list">
+                    <div class="action-header">
+                        <span class="col-num">#</span>
+                        <span class="col-time">Time</span>
+                        <span class="col-gap">Gap</span>
+                        <span class="col-type">Type</span>
+                        <span class="col-element">Element</span>
+                        <span class="col-controls"></span>
+                    </div>
+                    @for (int i = 0; i < EditingRecording.Actions.Count; i++)
+                    {
+                        var idx = i;
+                        var action = EditingRecording.Actions[i];
+                        var prevTime = i > 0 ? EditingRecording.Actions[i - 1].TimestampMs : 0;
+                        var gap = action.TimestampMs - prevTime;
+                        <div class="action-row @(idx == SelectedActionIndex ? "selected" : "")" @onclick="() => SelectAction(idx)">
+                            <span class="col-num">@(i + 1)</span>
+                            <span class="col-time">
+                                <input type="number" step="0.1" min="0"
+                                       value="@(action.TimestampMs / 1000.0)"
+                                       @onchange="(e) => UpdateActionTime(idx, e)"
+                                       class="time-input" />s
+                            </span>
+                            <span class="col-gap @(gap > 1000 ? "gap-long" : "")">+@((gap / 1000.0).ToString("F1"))s</span>
+                            <span class="col-type">@GetActionTypeName(action.Type)</span>
+                            <span class="col-element">@(action.ElementType ?? "-")</span>
+                            <span class="col-controls">
+                                <button class="btn btn-xs btn-outline-secondary" @onclick="() => MoveActionUp(idx)" disabled="@(idx == 0)" title="Move up">↑</button>
+                                <button class="btn btn-xs btn-outline-secondary" @onclick="() => MoveActionDown(idx)" disabled="@(idx == EditingRecording.Actions.Count - 1)" title="Move down">↓</button>
+                                <button class="btn btn-xs btn-outline-danger" @onclick="() => DeleteAction(idx)" title="Delete">×</button>
+                            </span>
+                        </div>
+                    }
+                </div>
+                <div class="editor-footer">
+                    <button class="btn btn-sm btn-secondary" @onclick="CloseRecordingEditor">Cancel</button>
+                    <button class="btn btn-sm btn-primary" @onclick="SaveEditedRecording">Save Changes</button>
                 </div>
             </div>
         </div>
@@ -1050,6 +1113,11 @@
     private System.Threading.CancellationTokenSource? ReplayCts;
     private string RecordingName = "My Recording";
     private string SelectedReplayId = "";
+
+    // Recording editor state
+    private bool ShowRecordingEditor = false;
+    private Recording? EditingRecording = null;
+    private int SelectedActionIndex = -1;
 
     // Property to set Anthropic key in cascade mode - shares with AiService.ApiKey
     private string CascadeAnthropicKeyInput
@@ -3886,6 +3954,151 @@
         {
             InputHint = $"Import failed: {ex.Message}";
         }
+    }
+
+    // Recording Editor Methods
+    private void OpenRecordingEditor(Recording recording)
+    {
+        // Deep clone the recording for editing
+        var json = System.Text.Json.JsonSerializer.Serialize(recording);
+        EditingRecording = System.Text.Json.JsonSerializer.Deserialize<Recording>(json);
+        SelectedActionIndex = -1;
+        ShowRecordingEditor = true;
+        StateHasChanged();
+    }
+
+    private void CloseRecordingEditor()
+    {
+        ShowRecordingEditor = false;
+        EditingRecording = null;
+        SelectedActionIndex = -1;
+        StateHasChanged();
+    }
+
+    private void SelectAction(int index)
+    {
+        SelectedActionIndex = index;
+        StateHasChanged();
+    }
+
+    private string GetActionTypeName(ActionType type)
+    {
+        return type switch
+        {
+            ActionType.CreateElement => "Create",
+            ActionType.MoveElement => "Move",
+            ActionType.DeleteElement => "Delete",
+            ActionType.ModifyElement => "Modify",
+            ActionType.SelectElement => "Select",
+            ActionType.DeselectElement => "Deselect",
+            ActionType.GroupElements => "Group",
+            ActionType.UngroupElements => "Ungroup",
+            ActionType.AddLayer => "Add Layer",
+            ActionType.DeleteLayer => "Del Layer",
+            ActionType.SelectLayer => "Sel Layer",
+            ActionType.SetCanvasSize => "Canvas Size",
+            ActionType.SetCanvasFill => "Canvas Fill",
+            ActionType.Clear => "Clear",
+            _ => type.ToString()
+        };
+    }
+
+    private void UpdateActionTime(int index, ChangeEventArgs e)
+    {
+        if (EditingRecording == null || index < 0 || index >= EditingRecording.Actions.Count) return;
+        if (double.TryParse(e.Value?.ToString(), out var seconds))
+        {
+            EditingRecording.Actions[index].TimestampMs = (long)(seconds * 1000);
+            // Re-sort by timestamp
+            EditingRecording.Actions = EditingRecording.Actions.OrderBy(a => a.TimestampMs).ToList();
+            StateHasChanged();
+        }
+    }
+
+    private void MoveActionUp(int index)
+    {
+        if (EditingRecording == null || index <= 0) return;
+        var action = EditingRecording.Actions[index];
+        var prevAction = EditingRecording.Actions[index - 1];
+        // Swap timestamps
+        (action.TimestampMs, prevAction.TimestampMs) = (prevAction.TimestampMs, action.TimestampMs);
+        // Swap positions
+        EditingRecording.Actions[index] = prevAction;
+        EditingRecording.Actions[index - 1] = action;
+        SelectedActionIndex = index - 1;
+        StateHasChanged();
+    }
+
+    private void MoveActionDown(int index)
+    {
+        if (EditingRecording == null || index >= EditingRecording.Actions.Count - 1) return;
+        var action = EditingRecording.Actions[index];
+        var nextAction = EditingRecording.Actions[index + 1];
+        // Swap timestamps
+        (action.TimestampMs, nextAction.TimestampMs) = (nextAction.TimestampMs, action.TimestampMs);
+        // Swap positions
+        EditingRecording.Actions[index] = nextAction;
+        EditingRecording.Actions[index + 1] = action;
+        SelectedActionIndex = index + 1;
+        StateHasChanged();
+    }
+
+    private void DeleteAction(int index)
+    {
+        if (EditingRecording == null || index < 0 || index >= EditingRecording.Actions.Count) return;
+        EditingRecording.Actions.RemoveAt(index);
+        if (SelectedActionIndex >= EditingRecording.Actions.Count)
+            SelectedActionIndex = EditingRecording.Actions.Count - 1;
+        StateHasChanged();
+    }
+
+    private void NormalizeGaps()
+    {
+        if (EditingRecording == null || EditingRecording.Actions.Count == 0) return;
+        var totalDuration = EditingRecording.DurationMs;
+        var avgGap = totalDuration / Math.Max(EditingRecording.Actions.Count, 1);
+        // Use a minimum gap of 200ms, max of 500ms
+        var gap = Math.Clamp(avgGap, 200, 500);
+        for (int i = 0; i < EditingRecording.Actions.Count; i++)
+        {
+            EditingRecording.Actions[i].TimestampMs = i * gap;
+        }
+        StateHasChanged();
+    }
+
+    private void ScaleTiming(double factor)
+    {
+        if (EditingRecording == null) return;
+        foreach (var action in EditingRecording.Actions)
+        {
+            action.TimestampMs = (long)(action.TimestampMs * factor);
+        }
+        StateHasChanged();
+    }
+
+    private async Task TestPlayEdited()
+    {
+        if (EditingRecording == null || IsReplaying) return;
+        // Temporarily play the edited recording
+        await StartReplay(EditingRecording);
+    }
+
+    private void SaveEditedRecording()
+    {
+        if (EditingRecording == null) return;
+
+        // Find and update the original recording
+        var original = SavedRecordings.FirstOrDefault(r => r.Id == EditingRecording.Id);
+        if (original != null)
+        {
+            original.Actions = EditingRecording.Actions;
+            // Update localStorage
+            _ = JS.InvokeVoidAsync("localStorage.setItem", $"vecsketch-recording-{original.Id}",
+                System.Text.Json.JsonSerializer.Serialize(original));
+            InputHint = $"Recording '{original.Name}' updated with {original.Actions.Count} actions";
+        }
+
+        CloseRecordingEditor();
     }
 
     private void CopySelected()
