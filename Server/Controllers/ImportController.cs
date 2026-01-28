@@ -45,7 +45,7 @@ public class ImportController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error importing AI/PDF file: {FileName}", file.FileName);
+            _logger.LogWarning("Import failed for {FileName}: {Message}", file.FileName, ex.Message);
             return Ok(new ImportResult
             {
                 Success = false,
@@ -326,7 +326,7 @@ public class ImportController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error extracting paths from page");
+            _logger.LogWarning("Error extracting paths: {Message}", ex.Message);
         }
 
         return elements;
@@ -390,7 +390,7 @@ public class ImportController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Error extracting images from page");
+            _logger.LogWarning("Error extracting images: {Message}", ex.Message);
         }
 
         return elements;

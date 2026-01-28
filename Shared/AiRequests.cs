@@ -136,6 +136,7 @@ public class CascadeStepProgress
     public int StepIndex { get; set; }
     public int TotalSteps { get; set; }
     public CascadeStepStatus Status { get; set; }
+    public string? Input { get; set; }  // The prompt sent to this step
     public string? Output { get; set; }
     public string? Error { get; set; }
     public long ElapsedMs { get; set; }

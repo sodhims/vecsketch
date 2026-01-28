@@ -8,6 +8,7 @@ namespace VecSketch.Client.Services;
 public class CascadeService
 {
     private readonly HttpClient _http;
+    private readonly HttpClient _directOllamaHttp;
     private readonly JsonSerializerOptions _jsonOptions;
 
     public CascadeMatrix CurrentMatrix { get; set; } = new();
@@ -15,9 +16,54 @@ public class CascadeService
 
     public event Action<CascadeStepProgress>? OnStepProgress;
 
+    private readonly string _enhancerPrompt = """
+        You are a prompt enhancer for a vector graphics AI. Take the user's simple description and create
+        a detailed, structured prompt that will produce beautiful vector graphics.
+
+        Guidelines:
+        - Add specific colors (use hex codes when possible)
+        - Specify positions and sizes relative to an 800x600 canvas
+        - Add visual details like gradients, shadows, highlights
+        - Structure the description from background to foreground
+        - Be specific about shapes and their relationships
+
+        Return ONLY the enhanced prompt, no explanations.
+        """;
+
+    private readonly string _drawingPrompt = """
+        You are a vector graphics assistant. Given a description, output JSON commands to draw it.
+
+        Available commands (use "type" as discriminator):
+        - {"type":"setCanvas", "Width":n, "Height":n, "Fill":"#hex"}
+        - {"type":"rect", "X":n, "Y":n, "W":n, "H":n, "Fill":"#hex", "Stroke":"#hex", "StrokeWidth":n}
+        - {"type":"circle", "Cx":n, "Cy":n, "R":n, "Fill":"#hex", "Stroke":"#hex"}
+        - {"type":"ellipse", "Cx":n, "Cy":n, "Rx":n, "Ry":n, "Fill":"#hex", "Stroke":"#hex"}
+        - {"type":"line", "X1":n, "Y1":n, "X2":n, "Y2":n, "Stroke":"#hex", "StrokeWidth":n}
+        - {"type":"path", "D":"svg path string", "Fill":"#hex", "Stroke":"#hex"}
+        - {"type":"text", "X":n, "Y":n, "Content":"text", "Font":"Arial", "Size":n, "Fill":"#hex"}
+        - {"type":"polygon", "Points":[{"X":n,"Y":n},...], "Fill":"#hex", "Stroke":"#hex"}
+        - {"type":"arc", "Cx":n, "Cy":n, "R":n, "StartAngle":degrees, "EndAngle":degrees, "Stroke":"#hex"}
+        - {"type":"bezier", "X1":n, "Y1":n, "Cx1":n, "Cy1":n, "Cx2":n, "Cy2":n, "X2":n, "Y2":n, "Stroke":"#hex"}
+        - {"type":"group", "Children":[...commands...], "Id":"optional-name"}
+        - {"type":"image", "X":n, "Y":n, "Width":n, "Height":n, "Src":"url or data uri"}
+
+        Respond ONLY with valid JSON in this exact format:
+        {"Thinking":"brief explanation of approach","Commands":[...array of commands...]}
+
+        Guidelines:
+        - Default canvas is 800x600 unless user specifies size
+        - Center designs on the canvas
+        - Use professional, pleasing colors
+        - Use appropriate stroke widths (1-4 for fine details, 4-8 for emphasis)
+        - For complex shapes, use SVG path "D" commands (M, L, C, Q, A, Z)
+        - Layer elements logically (background first, details last)
+        - Add visual depth with subtle color variations
+        """;
+
     public CascadeService(HttpClient http)
     {
         _http = http;
+        _directOllamaHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true,
@@ -37,13 +83,12 @@ public class CascadeService
             Slot1Model = "claude-sonnet-4-20250514"
         });
 
-        // Preset: Ollama Only (#1 = Ollama)
+        // Preset: Ollama Only (#1 = Ollama Local)
         Presets.Add(new CascadeMatrixPreset
         {
-            Name = "Ollama Only",
-            Slot1Provider = "Ollama",
-            Slot1Model = "gemma3:4b",
-            Slot1Endpoint = "http://localhost:11434"
+            Name = "Ollama Local",
+            Slot1Provider = "OllamaLocal",
+            Slot1Model = "gemma3:4b"
         });
 
         // Preset: DeepSeek Only (#1 = DeepSeek)
@@ -54,35 +99,32 @@ public class CascadeService
             Slot1Model = "deepseek-chat"
         });
 
-        // Preset: Ollama → Claude (#1 = Ollama enhancer, #2 = Claude drawer)
+        // Preset: OllamaLocal → Claude (#1 = Ollama enhancer, #2 = Claude drawer)
         Presets.Add(new CascadeMatrixPreset
         {
-            Name = "Ollama → Claude",
-            Slot1Provider = "Ollama",
+            Name = "OllamaLocal → Claude",
+            Slot1Provider = "OllamaLocal",
             Slot1Model = "gemma3:4b",
-            Slot1Endpoint = "http://localhost:11434",
             Slot2Provider = "Anthropic",
             Slot2Model = "claude-sonnet-4-20250514"
         });
 
-        // Preset: Ollama → DeepSeek (#1 = Ollama enhancer, #2 = DeepSeek drawer)
+        // Preset: OllamaLocal → DeepSeek (#1 = Ollama enhancer, #2 = DeepSeek drawer)
         Presets.Add(new CascadeMatrixPreset
         {
-            Name = "Ollama → DeepSeek",
-            Slot1Provider = "Ollama",
+            Name = "OllamaLocal → DeepSeek",
+            Slot1Provider = "OllamaLocal",
             Slot1Model = "gemma3:4b",
-            Slot1Endpoint = "http://localhost:11434",
             Slot2Provider = "DeepSeek",
             Slot2Model = "deepseek-chat"
         });
 
-        // Preset: Full Chain (#1 = Ollama, #2 = DeepSeek, #3 = Claude)
+        // Preset: Full Chain (#1 = OllamaLocal, #2 = DeepSeek, #3 = Claude)
         Presets.Add(new CascadeMatrixPreset
         {
-            Name = "Ollama → DeepSeek → Claude",
-            Slot1Provider = "Ollama",
+            Name = "OllamaLocal → DeepSeek → Claude",
+            Slot1Provider = "OllamaLocal",
             Slot1Model = "gemma3:4b",
-            Slot1Endpoint = "http://localhost:11434",
             Slot2Provider = "DeepSeek",
             Slot2Model = "deepseek-chat",
             Slot3Provider = "Anthropic",
@@ -97,24 +139,31 @@ public class CascadeService
             Slot1Model = "gpt-4o-mini"
         });
 
-        // Preset: Ollama → OpenAI (#1 = Ollama enhancer, #2 = OpenAI drawer)
+        // Preset: OllamaLocal → OpenAI (#1 = Ollama enhancer, #2 = OpenAI drawer)
         Presets.Add(new CascadeMatrixPreset
         {
-            Name = "Ollama → OpenAI",
-            Slot1Provider = "Ollama",
+            Name = "OllamaLocal → OpenAI",
+            Slot1Provider = "OllamaLocal",
             Slot1Model = "gemma3:4b",
-            Slot1Endpoint = "http://localhost:11434",
             Slot2Provider = "OpenAI",
             Slot2Model = "gpt-4o-mini"
         });
 
-        // Preset: Ollama (Llama) - for users with llama models
+        // Preset: Ollama Local (Llama) - for users with llama models
         Presets.Add(new CascadeMatrixPreset
         {
-            Name = "Ollama (Llama 3.3)",
+            Name = "OllamaLocal (Llama 3.3)",
+            Slot1Provider = "OllamaLocal",
+            Slot1Model = "llama3.3"
+        });
+
+        // Preset: Remote Ollama - for network Ollama instances
+        Presets.Add(new CascadeMatrixPreset
+        {
+            Name = "Ollama (Remote)",
             Slot1Provider = "Ollama",
-            Slot1Model = "llama3.3",
-            Slot1Endpoint = "http://localhost:11434"
+            Slot1Model = "llama3.2",
+            Slot1Endpoint = "http://your-server:11434"
         });
 
         // Apply first preset as default
@@ -174,6 +223,25 @@ public class CascadeService
                     slot.ApiKey = openaiKey;
                 // DeepSeek doesn't require an API key
             }
+        }
+
+        // Check if ALL slots are OllamaLocal - if so, execute directly from browser
+        var hasOllamaLocal = activeSlots.Any(s => s.Provider == "OllamaLocal");
+        var allOllamaLocal = activeSlots.All(s => s.Provider == "OllamaLocal");
+
+        if (allOllamaLocal)
+        {
+            return await ExecuteDirectOllamaAsync(prompt, activeSlots, reverse);
+        }
+
+        // If mixed providers with OllamaLocal, we can't route through server
+        if (hasOllamaLocal)
+        {
+            return new CascadeExecuteResult
+            {
+                Success = false,
+                Error = "Mixed OllamaLocal with server-side providers not yet supported. Use either all OllamaLocal or all server-side providers."
+            };
         }
 
         var request = new CascadeExecuteRequest
@@ -253,6 +321,136 @@ public class CascadeService
             {
                 Success = false,
                 Error = $"Unexpected error: {ex.Message}"
+            };
+        }
+    }
+
+    private async Task<CascadeExecuteResult> ExecuteDirectOllamaAsync(string prompt, List<CascadeSlot> slots, bool reverse)
+    {
+        var stepResults = new List<CascadeStepProgress>();
+        var totalStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var currentInput = prompt;
+
+        if (reverse)
+        {
+            slots = slots.AsEnumerable().Reverse().ToList();
+        }
+
+        try
+        {
+            for (int i = 0; i < slots.Count; i++)
+            {
+                var slot = slots[i];
+                var isLast = i == slots.Count - 1;
+                var stepStopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+                // Determine the system prompt based on whether this is the final slot
+                var systemPrompt = isLast ? _drawingPrompt : _enhancerPrompt;
+                var role = isLast ? "drawer" : "enhancer";
+
+                // Report step starting
+                var stepProgress = new CascadeStepProgress
+                {
+                    StepId = $"slot-{slot.Position}",
+                    StepName = $"#{slot.Position} OllamaLocal ({slot.Model ?? "unknown"}) - {role}",
+                    StepIndex = i,
+                    TotalSteps = slots.Count,
+                    Status = CascadeStepStatus.Running,
+                    Input = currentInput  // Store the input prompt
+                };
+                OnStepProgress?.Invoke(stepProgress);
+
+                // Call local Ollama
+                var ollamaRequest = new
+                {
+                    model = slot.Model ?? "llama3.2",
+                    prompt = $"{systemPrompt}\n\nUser request: {currentInput}",
+                    stream = false
+                };
+
+                var response = await _directOllamaHttp.PostAsJsonAsync(
+                    "http://localhost:11434/api/generate",
+                    ollamaRequest);
+
+                stepStopwatch.Stop();
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    var errorBody = await response.Content.ReadAsStringAsync();
+                    stepProgress.Status = CascadeStepStatus.Failed;
+                    stepProgress.Error = $"Ollama error ({response.StatusCode}): {errorBody}";
+                    stepProgress.ElapsedMs = stepStopwatch.ElapsedMilliseconds;
+                    OnStepProgress?.Invoke(stepProgress);
+                    stepResults.Add(stepProgress);
+
+                    return new CascadeExecuteResult
+                    {
+                        Success = false,
+                        Error = stepProgress.Error,
+                        StepResults = stepResults,
+                        TotalElapsedMs = totalStopwatch.ElapsedMilliseconds
+                    };
+                }
+
+                var responseBody = await response.Content.ReadAsStringAsync();
+                using var doc = JsonDocument.Parse(responseBody);
+                var aiResponse = doc.RootElement.GetProperty("response").GetString() ?? "";
+
+                // Update step progress
+                stepProgress.Output = aiResponse;
+                stepProgress.Status = CascadeStepStatus.Completed;
+                stepProgress.ElapsedMs = stepStopwatch.ElapsedMilliseconds;
+                OnStepProgress?.Invoke(stepProgress);
+                stepResults.Add(stepProgress);
+
+                // Pass output to next step
+                currentInput = aiResponse;
+            }
+
+            totalStopwatch.Stop();
+
+            // Parse the final output as drawing commands
+            var drawingResult = ParseDrawingResponse(currentInput);
+
+            return new CascadeExecuteResult
+            {
+                Success = drawingResult.Success,
+                Error = drawingResult.Error,
+                DrawingResponse = drawingResult.Response,
+                Thinking = drawingResult.Thinking,
+                RawResponse = currentInput,
+                StepResults = stepResults,
+                TotalElapsedMs = totalStopwatch.ElapsedMilliseconds
+            };
+        }
+        catch (HttpRequestException ex)
+        {
+            return new CascadeExecuteResult
+            {
+                Success = false,
+                Error = $"Cannot connect to local Ollama: {ex.Message}. Is Ollama running?",
+                StepResults = stepResults,
+                TotalElapsedMs = totalStopwatch.ElapsedMilliseconds
+            };
+        }
+        catch (TaskCanceledException)
+        {
+            return new CascadeExecuteResult
+            {
+                Success = false,
+                Error = "Request timed out - Ollama may be processing a large model. Try a smaller model or increase wait time.",
+                StepResults = stepResults,
+                TotalElapsedMs = totalStopwatch.ElapsedMilliseconds
+            };
+        }
+        catch (Exception ex)
+        {
+            return new CascadeExecuteResult
+            {
+                Success = false,
+                Error = $"Unexpected error: {ex.Message}",
+                StepResults = stepResults,
+                TotalElapsedMs = totalStopwatch.ElapsedMilliseconds
             };
         }
     }
@@ -375,6 +573,63 @@ public class CascadeService
             }
 
             searchStart = braceStart + 1;
+        }
+    }
+
+    public async Task<OllamaModelsResult> GetLocalOllamaModelsAsync()
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var response = await _directOllamaHttp.GetAsync(
+                "http://localhost:11434/api/tags",
+                cts.Token);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return new OllamaModelsResult
+                {
+                    Success = false,
+                    Error = $"Ollama returned {response.StatusCode}"
+                };
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+
+            var models = new List<string>();
+            if (doc.RootElement.TryGetProperty("models", out var modelsArray))
+            {
+                foreach (var model in modelsArray.EnumerateArray())
+                {
+                    if (model.TryGetProperty("name", out var nameProp))
+                    {
+                        models.Add(nameProp.GetString() ?? "");
+                    }
+                }
+            }
+
+            return new OllamaModelsResult
+            {
+                Success = true,
+                Models = models
+            };
+        }
+        catch (HttpRequestException ex)
+        {
+            return new OllamaModelsResult
+            {
+                Success = false,
+                Error = $"Cannot connect to local Ollama: {ex.Message}"
+            };
+        }
+        catch (TaskCanceledException)
+        {
+            return new OllamaModelsResult
+            {
+                Success = false,
+                Error = "Connection timed out - is Ollama running on this machine?"
+            };
         }
     }
 

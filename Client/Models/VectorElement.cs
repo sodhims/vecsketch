@@ -3,6 +3,7 @@ namespace VecSketch.Client.Models;
 public abstract class VectorElement
 {
     public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string? GroupId { get; set; } = null; // Elements with same GroupId are grouped together
     public string Stroke { get; set; } = "#000000";
     public double StrokeWidth { get; set; } = 2;
     public string Fill { get; set; } = "none";
@@ -251,79 +252,164 @@ public class SvgPathElement : VectorElement
         double minX = double.MaxValue, minY = double.MaxValue;
         double maxX = double.MinValue, maxY = double.MinValue;
         double currentX = 0, currentY = 0;
+        double startX = 0, startY = 0;
 
-        var parts = d.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
-        char lastCommand = 'M';
-
-        for (int i = 0; i < parts.Length; i++)
+        void UpdateBounds(double x, double y)
         {
-            var part = parts[i].Trim();
-            if (string.IsNullOrEmpty(part)) continue;
-
-            char cmd = part[0];
-            if (char.IsLetter(cmd))
-            {
-                lastCommand = cmd;
-                part = part.Substring(1);
-                if (string.IsNullOrEmpty(part) && i + 1 < parts.Length)
-                {
-                    i++;
-                    part = parts[i];
-                }
-            }
-
-            if (!double.TryParse(part, out double x)) continue;
-            if (i + 1 >= parts.Length) break;
-
-            i++;
-            if (!double.TryParse(parts[i], out double y)) continue;
-
-            switch (char.ToUpper(lastCommand))
-            {
-                case 'M':
-                case 'L':
-                case 'C':
-                case 'S':
-                case 'Q':
-                case 'T':
-                    if (char.IsUpper(lastCommand))
-                    {
-                        currentX = x;
-                        currentY = y;
-                    }
-                    else
-                    {
-                        currentX += x;
-                        currentY += y;
-                    }
-                    minX = Math.Min(minX, currentX);
-                    minY = Math.Min(minY, currentY);
-                    maxX = Math.Max(maxX, currentX);
-                    maxY = Math.Max(maxY, currentY);
-                    break;
-            }
+            minX = Math.Min(minX, x);
+            minY = Math.Min(minY, y);
+            maxX = Math.Max(maxX, x);
+            maxY = Math.Max(maxY, y);
         }
 
-        if (minX == double.MaxValue)
-            return new BoundingBox(0, 0, 0, 0);
+        // Extract all numbers from the path using regex
+        var numberPattern = new System.Text.RegularExpressions.Regex(@"-?\d+\.?\d*(?:[eE][+-]?\d+)?");
+        var numbers = new List<double>();
+        foreach (System.Text.RegularExpressions.Match match in numberPattern.Matches(d))
+        {
+            if (double.TryParse(match.Value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out double num))
+                numbers.Add(num);
+        }
 
-        return new BoundingBox(minX, minY, maxX - minX, maxY - minY);
+        // Extract commands
+        var commandPattern = new System.Text.RegularExpressions.Regex(@"[MmLlHhVvCcSsQqTtAaZz]");
+        var commands = new List<(char cmd, int startIndex)>();
+
+        foreach (System.Text.RegularExpressions.Match match in commandPattern.Matches(d))
+        {
+            // Count numbers before this command
+            int numbersBeforeThis = 0;
+            var beforeCmd = d.Substring(0, match.Index);
+            foreach (System.Text.RegularExpressions.Match numMatch in numberPattern.Matches(beforeCmd))
+                numbersBeforeThis++;
+            commands.Add((match.Value[0], numbersBeforeThis));
+        }
+
+        for (int cmdIdx = 0; cmdIdx < commands.Count; cmdIdx++)
+        {
+            char cmd = commands[cmdIdx].cmd;
+            int startNumIdx = commands[cmdIdx].startIndex;
+            int endNumIdx = cmdIdx + 1 < commands.Count ? commands[cmdIdx + 1].startIndex : numbers.Count;
+            var cmdNumbers = numbers.Skip(startNumIdx).Take(endNumIdx - startNumIdx).ToList();
+            int i = 0;
+
+            while (i < cmdNumbers.Count || cmd == 'Z' || cmd == 'z')
+            {
+                switch (cmd)
+                {
+                    case 'M': // Move to absolute
+                        if (i + 1 < cmdNumbers.Count) { currentX = cmdNumbers[i]; currentY = cmdNumbers[i + 1]; startX = currentX; startY = currentY; UpdateBounds(currentX, currentY); i += 2; cmd = 'L'; }
+                        else goto done;
+                        break;
+                    case 'm': // Move to relative
+                        if (i + 1 < cmdNumbers.Count) { currentX += cmdNumbers[i]; currentY += cmdNumbers[i + 1]; startX = currentX; startY = currentY; UpdateBounds(currentX, currentY); i += 2; cmd = 'l'; }
+                        else goto done;
+                        break;
+                    case 'L': // Line to absolute
+                        if (i + 1 < cmdNumbers.Count) { currentX = cmdNumbers[i]; currentY = cmdNumbers[i + 1]; UpdateBounds(currentX, currentY); i += 2; }
+                        else goto done;
+                        break;
+                    case 'l': // Line to relative
+                        if (i + 1 < cmdNumbers.Count) { currentX += cmdNumbers[i]; currentY += cmdNumbers[i + 1]; UpdateBounds(currentX, currentY); i += 2; }
+                        else goto done;
+                        break;
+                    case 'H': // Horizontal line absolute
+                        if (i < cmdNumbers.Count) { currentX = cmdNumbers[i]; UpdateBounds(currentX, currentY); i++; }
+                        else goto done;
+                        break;
+                    case 'h': // Horizontal line relative
+                        if (i < cmdNumbers.Count) { currentX += cmdNumbers[i]; UpdateBounds(currentX, currentY); i++; }
+                        else goto done;
+                        break;
+                    case 'V': // Vertical line absolute
+                        if (i < cmdNumbers.Count) { currentY = cmdNumbers[i]; UpdateBounds(currentX, currentY); i++; }
+                        else goto done;
+                        break;
+                    case 'v': // Vertical line relative
+                        if (i < cmdNumbers.Count) { currentY += cmdNumbers[i]; UpdateBounds(currentX, currentY); i++; }
+                        else goto done;
+                        break;
+                    case 'C': // Cubic bezier absolute (x1 y1 x2 y2 x y)
+                        if (i + 5 < cmdNumbers.Count) { UpdateBounds(cmdNumbers[i], cmdNumbers[i+1]); UpdateBounds(cmdNumbers[i+2], cmdNumbers[i+3]); currentX = cmdNumbers[i+4]; currentY = cmdNumbers[i+5]; UpdateBounds(currentX, currentY); i += 6; }
+                        else goto done;
+                        break;
+                    case 'c': // Cubic bezier relative
+                        if (i + 5 < cmdNumbers.Count) { UpdateBounds(currentX + cmdNumbers[i], currentY + cmdNumbers[i+1]); UpdateBounds(currentX + cmdNumbers[i+2], currentY + cmdNumbers[i+3]); currentX += cmdNumbers[i+4]; currentY += cmdNumbers[i+5]; UpdateBounds(currentX, currentY); i += 6; }
+                        else goto done;
+                        break;
+                    case 'S': // Smooth cubic bezier absolute (x2 y2 x y)
+                    case 'Q': // Quadratic bezier absolute (x1 y1 x y)
+                        if (i + 3 < cmdNumbers.Count) { UpdateBounds(cmdNumbers[i], cmdNumbers[i+1]); currentX = cmdNumbers[i+2]; currentY = cmdNumbers[i+3]; UpdateBounds(currentX, currentY); i += 4; }
+                        else goto done;
+                        break;
+                    case 's':
+                    case 'q':
+                        if (i + 3 < cmdNumbers.Count) { UpdateBounds(currentX + cmdNumbers[i], currentY + cmdNumbers[i+1]); currentX += cmdNumbers[i+2]; currentY += cmdNumbers[i+3]; UpdateBounds(currentX, currentY); i += 4; }
+                        else goto done;
+                        break;
+                    case 'T': // Smooth quadratic absolute
+                        if (i + 1 < cmdNumbers.Count) { currentX = cmdNumbers[i]; currentY = cmdNumbers[i+1]; UpdateBounds(currentX, currentY); i += 2; }
+                        else goto done;
+                        break;
+                    case 't': // Smooth quadratic relative
+                        if (i + 1 < cmdNumbers.Count) { currentX += cmdNumbers[i]; currentY += cmdNumbers[i+1]; UpdateBounds(currentX, currentY); i += 2; }
+                        else goto done;
+                        break;
+                    case 'A': // Arc absolute (rx ry x-axis-rotation large-arc sweep x y)
+                        if (i + 6 < cmdNumbers.Count) { currentX = cmdNumbers[i+5]; currentY = cmdNumbers[i+6]; UpdateBounds(currentX, currentY); i += 7; }
+                        else goto done;
+                        break;
+                    case 'a': // Arc relative
+                        if (i + 6 < cmdNumbers.Count) { currentX += cmdNumbers[i+5]; currentY += cmdNumbers[i+6]; UpdateBounds(currentX, currentY); i += 7; }
+                        else goto done;
+                        break;
+                    case 'Z':
+                    case 'z': // Close path
+                        currentX = startX; currentY = startY;
+                        goto done;
+                    default:
+                        goto done;
+                }
+            }
+            done:;
+        }
+
+        // If parsing found no valid points, return a default small box at origin
+        if (minX == double.MaxValue || maxX == double.MinValue)
+            return new BoundingBox(0, 0, 10, 10);
+
+        // Ensure minimum size for clickability
+        var width = Math.Max(maxX - minX, 5);
+        var height = Math.Max(maxY - minY, 5);
+
+        return new BoundingBox(minX, minY, width, height);
     }
 }
 
 public record Point(double X, double Y);
 
-public enum DrawingTool 
-{ 
-    Select, 
-    Line, 
-    Pencil, 
-    Rectangle, 
-    Circle, 
+public enum DrawingTool
+{
+    Select,
+    Line,
+    Pencil,
+    Rectangle,
+    Circle,
     Ellipse,
     Triangle,
     Polygon,
     Star,
     Arrow,
     Text
+}
+
+public class Layer
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString();
+    public string Name { get; set; } = "Layer";
+    public List<VectorElement> Elements { get; set; } = new();
+    public bool IsVisible { get; set; } = true;
+    public bool IsLocked { get; set; } = false;
+    public double Opacity { get; set; } = 1.0;
 }

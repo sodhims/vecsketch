@@ -36,7 +36,7 @@ public class AiController : ControllerBase
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error generating AI drawing");
+            _logger.LogWarning("AI generate failed: {Message}", ex.Message);
             return StatusCode(500, new { error = ex.Message });
         }
     }
@@ -323,7 +323,7 @@ public class AiController : ControllerBase
                 progress.ElapsedMs = stepSw.ElapsedMilliseconds;
                 stepResults.Add(progress);
 
-                _logger.LogError(ex, "Slot #{Position} threw exception", slot.Position);
+                _logger.LogWarning("Slot #{Position} failed: {Message}", slot.Position, ex.Message);
 
                 sw.Stop();
                 return Ok(new CascadeExecuteResponse

@@ -15,6 +15,7 @@ public enum AiProvider
 public class AiDrawingService
 {
     private readonly HttpClient _http;
+    private readonly HttpClient _directOllamaHttp;
     private readonly JsonSerializerOptions _jsonOptions;
 
     private readonly string _systemPrompt = """
@@ -59,6 +60,7 @@ public class AiDrawingService
     public AiDrawingService(HttpClient http)
     {
         _http = http;
+        _directOllamaHttp = new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
         _jsonOptions = new JsonSerializerOptions
         {
             PropertyNameCaseInsensitive = true,
@@ -70,9 +72,15 @@ public class AiDrawingService
     {
         try
         {
+            // OllamaLocal: call Ollama directly from browser (uses client machine's localhost)
+            if (Provider == AiProvider.OllamaLocal)
+            {
+                return await GenerateDirectOllamaAsync(prompt);
+            }
+
             var request = new AiGenerateRequest
             {
-                Provider = Provider == AiProvider.OllamaLocal ? "Ollama" : Provider.ToString(),
+                Provider = Provider.ToString(),
                 Prompt = prompt,
                 SystemPrompt = _systemPrompt,
                 ApiKey = ApiKey,
@@ -133,6 +141,65 @@ public class AiDrawingService
         }
     }
 
+    private async Task<AiDrawingResult> GenerateDirectOllamaAsync(string prompt)
+    {
+        try
+        {
+            var fullPrompt = $"{_systemPrompt}\n\nUser request: {prompt}";
+            var ollamaRequest = new
+            {
+                model = OllamaModel,
+                prompt = fullPrompt,
+                stream = false
+            };
+
+            var response = await _directOllamaHttp.PostAsJsonAsync(
+                "http://localhost:11434/api/generate",
+                ollamaRequest);
+
+            var responseBody = await response.Content.ReadAsStringAsync();
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return new AiDrawingResult
+                {
+                    Success = false,
+                    Error = $"Ollama error ({response.StatusCode}): {responseBody}"
+                };
+            }
+
+            using var doc = JsonDocument.Parse(responseBody);
+            var aiResponse = doc.RootElement.GetProperty("response").GetString();
+
+            if (string.IsNullOrEmpty(aiResponse))
+            {
+                return new AiDrawingResult
+                {
+                    Success = false,
+                    Error = "Empty response from Ollama"
+                };
+            }
+
+            return ParseDrawingResponse(aiResponse);
+        }
+        catch (HttpRequestException ex)
+        {
+            return new AiDrawingResult
+            {
+                Success = false,
+                Error = $"Cannot connect to local Ollama: {ex.Message}. Is Ollama running on this machine?"
+            };
+        }
+        catch (TaskCanceledException)
+        {
+            return new AiDrawingResult
+            {
+                Success = false,
+                Error = "Request timed out - Ollama may be processing a large model"
+            };
+        }
+    }
+
     public async Task<ApiKeyTestResult> TestApiKeyAsync(string apiKey)
     {
         try
@@ -169,6 +236,12 @@ public class AiDrawingService
     {
         try
         {
+            // OllamaLocal: fetch models directly from local Ollama
+            if (Provider == AiProvider.OllamaLocal && endpoint == null)
+            {
+                return await GetDirectOllamaModelsAsync();
+            }
+
             var effectiveEndpoint = endpoint ?? EffectiveOllamaEndpoint;
             var url = $"/api/ai/ollama-models?endpoint={Uri.EscapeDataString(effectiveEndpoint)}";
 
@@ -204,6 +277,63 @@ public class AiDrawingService
             {
                 Success = false,
                 Error = $"Error: {ex.Message}"
+            };
+        }
+    }
+
+    private async Task<OllamaModelsResult> GetDirectOllamaModelsAsync()
+    {
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var response = await _directOllamaHttp.GetAsync(
+                "http://localhost:11434/api/tags",
+                cts.Token);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                return new OllamaModelsResult
+                {
+                    Success = false,
+                    Error = $"Ollama returned {response.StatusCode}"
+                };
+            }
+
+            var json = await response.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+
+            var models = new List<string>();
+            if (doc.RootElement.TryGetProperty("models", out var modelsArray))
+            {
+                foreach (var model in modelsArray.EnumerateArray())
+                {
+                    if (model.TryGetProperty("name", out var nameProp))
+                    {
+                        models.Add(nameProp.GetString() ?? "");
+                    }
+                }
+            }
+
+            return new OllamaModelsResult
+            {
+                Success = true,
+                Models = models
+            };
+        }
+        catch (HttpRequestException ex)
+        {
+            return new OllamaModelsResult
+            {
+                Success = false,
+                Error = $"Cannot connect to local Ollama: {ex.Message}"
+            };
+        }
+        catch (TaskCanceledException)
+        {
+            return new OllamaModelsResult
+            {
+                Success = false,
+                Error = "Connection timed out - is Ollama running on this machine?"
             };
         }
     }

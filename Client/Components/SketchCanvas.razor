@@ -10,8 +10,9 @@
 @inject IJSRuntime JS
 @inject AiDrawingService AiService
 @inject CascadeService CascadeService
+@implements IDisposable
 
-<div class="sketch-container" @ref="containerElement" tabindex="0" @onkeydown="OnKeyDown">
+<div class="sketch-container @CurrentThemeClass" @ref="containerElement" tabindex="0" @onkeydown="OnKeyDown">
     <div class="toolbar">
         <div class="tool-group">
             <label>Tool:</label>
@@ -101,13 +102,34 @@
             <input type="checkbox" checked="@TouchEnabled" @onchange="OnTouchToggleChange" title="Uncheck to disable touch for pen drawing" />
         </div>
 
+        <div class="tool-group">
+            <label>Theme:</label>
+            <select @bind="CurrentTheme" class="tool-select" @bind:after="OnThemeChanged">
+                <option value="">Default</option>
+                <option value="pinkish">Pinkish</option>
+                <option value="reddish">Reddish</option>
+                <option value="orangish">Orangish</option>
+                <option value="yellowish">Yellowish</option>
+                <option value="greenish">Greenish</option>
+                <option value="bluish">Bluish</option>
+                <option value="purplish">Purplish</option>
+                <option value="preppy">Preppy</option>
+                <option value="darkish">Darkish</option>
+            </select>
+        </div>
+
         <div class="tool-group actions">
             <button class="btn btn-sm btn-outline-light" @onclick="OnPasteClick">Paste</button>
             <button class="btn btn-sm btn-outline-light" @onclick="OnClearClick">Clear</button>
+            <button class="btn btn-sm btn-outline-light" @onclick="OnCleanupClick">Cleanup</button>
             <button class="btn btn-sm btn-outline-light" @onclick="OnUndoClick">Undo</button>
             <button class="btn btn-sm btn-outline-light" @onclick="OnExportClick">Export</button>
             <button class="btn btn-sm btn-outline-light" @onclick="OnImportClick" disabled="@IsImporting">
                 @(IsImporting ? "Importing..." : "Import")
+            </button>
+            <button class="btn btn-sm @(ShowLayersPanel ? "btn-warning" : "btn-outline-light")" @onclick="ToggleLayersPanel">Layers</button>
+            <button class="btn btn-sm @(ShowRecordingPanel ? "btn-warning" : "btn-outline-light") @(IsRecording ? "recording-active" : "")" @onclick="ToggleRecordingPanel">
+                @(IsRecording ? "● REC" : "Record")
             </button>
         </div>
     </div>
@@ -184,6 +206,27 @@
             }
         }
 
+        @* Group selection: orange bounding box and handles when multiple elements selected *@
+        @if (SelectedElements.Count > 1)
+        {
+            var gb = GetGroupBounds();
+            var handleSize = 8;
+            var hs = handleSize / 2.0;
+            var handleColor = "#ff6600";
+            <!-- Group bounding box (orange, dashed) -->
+            <rect x="@(gb.X - 4)" y="@(gb.Y - 4)" width="@(gb.Width + 8)" height="@(gb.Height + 8)" fill="none" stroke="@handleColor" stroke-width="2" stroke-dasharray="6 3" />
+            <!-- Corner handles -->
+            <rect x="@(gb.X - 4 - hs)" y="@(gb.Y - 4 - hs)" width="@handleSize" height="@handleSize" fill="#fff" stroke="@handleColor" stroke-width="1" class="resize-handle" data-handle="nw" />
+            <rect x="@(gb.X + gb.Width + 4 - hs)" y="@(gb.Y - 4 - hs)" width="@handleSize" height="@handleSize" fill="#fff" stroke="@handleColor" stroke-width="1" class="resize-handle" data-handle="ne" />
+            <rect x="@(gb.X - 4 - hs)" y="@(gb.Y + gb.Height + 4 - hs)" width="@handleSize" height="@handleSize" fill="#fff" stroke="@handleColor" stroke-width="1" class="resize-handle" data-handle="sw" />
+            <rect x="@(gb.X + gb.Width + 4 - hs)" y="@(gb.Y + gb.Height + 4 - hs)" width="@handleSize" height="@handleSize" fill="#fff" stroke="@handleColor" stroke-width="1" class="resize-handle" data-handle="se" />
+            <!-- Edge handles -->
+            <rect x="@(gb.X + gb.Width / 2 - hs)" y="@(gb.Y - 4 - hs)" width="@handleSize" height="@handleSize" fill="#fff" stroke="@handleColor" stroke-width="1" class="resize-handle" data-handle="n" />
+            <rect x="@(gb.X + gb.Width / 2 - hs)" y="@(gb.Y + gb.Height + 4 - hs)" width="@handleSize" height="@handleSize" fill="#fff" stroke="@handleColor" stroke-width="1" class="resize-handle" data-handle="s" />
+            <rect x="@(gb.X - 4 - hs)" y="@(gb.Y + gb.Height / 2 - hs)" width="@handleSize" height="@handleSize" fill="#fff" stroke="@handleColor" stroke-width="1" class="resize-handle" data-handle="w" />
+            <rect x="@(gb.X + gb.Width + 4 - hs)" y="@(gb.Y + gb.Height / 2 - hs)" width="@handleSize" height="@handleSize" fill="#fff" stroke="@handleColor" stroke-width="1" class="resize-handle" data-handle="e" />
+        }
+
         @if (ChainMode)
         {
             <!-- Chain mode indicators -->
@@ -253,6 +296,214 @@
             <div class="prop-row">
                 <button class="btn btn-sm btn-outline-danger" @onclick="DeleteSelected">Delete</button>
                 <button class="btn btn-sm btn-outline-secondary" @onclick="DuplicateSelected">Duplicate</button>
+            </div>
+            <div class="prop-row">
+                <button class="btn btn-sm btn-outline-info" @onclick="GroupSelected" disabled="@(SelectedElements.Count < 2)">Group</button>
+                <button class="btn btn-sm btn-outline-info" @onclick="UngroupSelected" disabled="@(!HasGroupedSelection())">Ungroup</button>
+            </div>
+        </div>
+    }
+
+    @if (ShowLayersPanel)
+    {
+        <div class="layers-panel" @onclick:stopPropagation="true" @onpointerdown:stopPropagation="true">
+            <div class="layers-header">
+                <span>Layers</span>
+                <div class="layers-actions">
+                    <button class="btn btn-sm btn-outline-primary" @onclick="AddLayer" title="Add Layer">+</button>
+                    <button class="btn btn-sm btn-outline-danger" @onclick="ShowDeleteLayerConfirm" title="Delete Layer" disabled="@(Layers.Count <= 1)">-</button>
+                </div>
+            </div>
+            <div class="layers-list">
+                @for (int i = Layers.Count - 1; i >= 0; i--)
+                {
+                    var layer = Layers[i];
+                    var layerIndex = i;
+                    <div class="layer-item @(layerIndex == CurrentLayerIndex ? "active" : "") @(layer.IsLocked ? "locked" : "")"
+                         @onclick="() => SelectLayer(layerIndex)">
+                        <button class="layer-visibility" @onclick:stopPropagation="true" @onclick="() => ToggleLayerVisibility(layerIndex)"
+                                title="@(layer.IsVisible ? "Hide" : "Show")">
+                            @(layer.IsVisible ? "👁" : "○")
+                        </button>
+                        <button class="layer-lock" @onclick:stopPropagation="true" @onclick="() => ToggleLayerLock(layerIndex)"
+                                title="@(layer.IsLocked ? "Unlock" : "Lock")">
+                            @(layer.IsLocked ? "🔒" : "🔓")
+                        </button>
+                        <span class="layer-name">@layer.Name</span>
+                        <span class="layer-count">(@layer.Elements.Count)</span>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (ShowDeleteLayerDialog)
+    {
+        <div class="modal-overlay" @onclick="() => ShowDeleteLayerDialog = false">
+            <div class="delete-layer-dialog" @onclick:stopPropagation="true">
+                <h4>Delete Layer: @CurrentLayer.Name</h4>
+                <p>This layer has @CurrentLayer.Elements.Count element(s).</p>
+                <div class="delete-options">
+                    @if (CurrentLayerIndex > 0)
+                    {
+                        <button class="btn btn-primary" @onclick="DeleteLayerTransferDown">
+                            Transfer to "@Layers[CurrentLayerIndex - 1].Name"
+                        </button>
+                    }
+                    <button class="btn btn-danger" @onclick="DeleteLayerAndContents">
+                        Delete All
+                    </button>
+                    <button class="btn btn-secondary" @onclick="() => ShowDeleteLayerDialog = false">
+                        Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (ShowCleanupDialog && LastCleanupResult != null)
+    {
+        <div class="modal-overlay" @onclick="() => ShowCleanupDialog = false">
+            <div class="delete-layer-dialog" @onclick:stopPropagation="true" style="min-width: 320px;">
+                <h4>Cleanup Complete</h4>
+                <div style="text-align: left; margin: 10px 0;">
+                    @if (LastCleanupResult.EmptyLayersRemoved > 0)
+                    {
+                        <p>Empty layers removed: @LastCleanupResult.EmptyLayersRemoved</p>
+                    }
+                    @if (LastCleanupResult.DegenerateShapesRemoved > 0)
+                    {
+                        <p>Degenerate shapes removed: @LastCleanupResult.DegenerateShapesRemoved</p>
+                    }
+                    @if (LastCleanupResult.OffCanvasRemoved > 0)
+                    {
+                        <p>Off-canvas elements removed: @LastCleanupResult.OffCanvasRemoved</p>
+                    }
+                    @if (LastCleanupResult.TinyElementsRemoved > 0)
+                    {
+                        <p>Tiny elements removed: @LastCleanupResult.TinyElementsRemoved</p>
+                    }
+                    @if (LastCleanupResult.InvisibleRemoved > 0)
+                    {
+                        <p>Invisible elements removed: @LastCleanupResult.InvisibleRemoved</p>
+                    }
+                    @if (LastCleanupResult.SinglePointPathsRemoved > 0)
+                    {
+                        <p>Single-point paths removed: @LastCleanupResult.SinglePointPathsRemoved</p>
+                    }
+                    @if (LastCleanupResult.OrphanGroupsFixed > 0)
+                    {
+                        <p>Orphan groups ungrouped: @LastCleanupResult.OrphanGroupsFixed</p>
+                    }
+                    @if (LastCleanupResult.TotalRemoved == 0 && LastCleanupResult.OrphanGroupsFixed == 0)
+                    {
+                        <p>Nothing to clean up!</p>
+                    }
+                </div>
+                <button class="btn btn-primary" @onclick="() => ShowCleanupDialog = false">OK</button>
+            </div>
+        </div>
+    }
+
+    @if (ShowRecordingPanel)
+    {
+        <div class="recording-panel" @onclick:stopPropagation="true" @onpointerdown:stopPropagation="true">
+            <div class="recording-header">
+                <span>Recording</span>
+                <button class="btn btn-sm btn-close" @onclick="() => ShowRecordingPanel = false">×</button>
+            </div>
+            <div class="recording-content">
+                <div class="recording-controls">
+                    <input type="text" @bind="RecordingName" placeholder="Recording name" class="recording-name-input" />
+                    @if (!IsRecording && !IsReplaying && (CurrentRecording == null || CurrentRecording.Actions.Count == 0))
+                    {
+                        <button class="btn btn-sm btn-danger" @onclick="StartRecording">● Start Recording</button>
+                    }
+                    else if (IsRecording)
+                    {
+                        <div class="recording-status">
+                            <span class="recording-indicator">● Recording</span>
+                            <span class="recording-time">@(RecordingStopwatch?.Elapsed.ToString(@"mm\:ss") ?? "00:00")</span>
+                            <span class="recording-actions">@(CurrentRecording?.Actions.Count ?? 0) actions</span>
+                        </div>
+                        <button class="btn btn-sm btn-secondary" @onclick="StopRecording">■ Stop</button>
+                    }
+                    else if (!IsRecording && !IsReplaying && CurrentRecording != null && CurrentRecording.Actions.Count > 0)
+                    {
+                        <div class="recording-status">
+                            <span>Recorded:</span>
+                            <span class="recording-actions">@CurrentRecording.Actions.Count actions</span>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-sm btn-primary" @onclick="SaveRecording">Save</button>
+                            <button class="btn btn-sm btn-secondary" @onclick="DiscardRecording">Discard</button>
+                            <button class="btn btn-sm btn-danger" @onclick="StartRecording">New</button>
+                        </div>
+                    }
+                    else if (IsReplaying)
+                    {
+                        <div class="recording-status">
+                            <span class="replay-indicator">▶ Replaying</span>
+                            <span>@ReplayIndex / @(CurrentRecording?.Actions.Count ?? 0)</span>
+                        </div>
+                        <button class="btn btn-sm btn-secondary" @onclick="StopReplay">■ Stop</button>
+                    }
+                </div>
+
+                <!-- Replay Section -->
+                <div class="replay-section">
+                    <h5>Replay</h5>
+                    @if (SavedRecordings.Count > 0)
+                    {
+                        <div class="replay-select-row">
+                            <select class="replay-select" @bind="SelectedReplayId">
+                                <option value="">-- Select recording --</option>
+                                @foreach (var rec in SavedRecordings)
+                                {
+                                    <option value="@rec.Id">@rec.Name (@rec.Actions.Count actions)</option>
+                                }
+                            </select>
+                            <button class="btn btn-sm btn-primary" @onclick="ReplaySelected"
+                                    disabled="@(string.IsNullOrEmpty(SelectedReplayId) || IsRecording || IsReplaying)">▶ Play</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <span class="no-recordings">No saved recordings</span>
+                    }
+                </div>
+
+                <!-- Saved Recordings Section -->
+                <div class="saved-recordings">
+                    <div class="saved-recordings-header">
+                        <h5>Saved Recordings</h5>
+                        <label class="btn btn-xs btn-secondary import-btn">
+                            Import JSON
+                            <InputFile OnChange="ImportRecordingJson" accept=".json" style="display:none;" />
+                        </label>
+                    </div>
+                    @if (SavedRecordings.Count > 0)
+                    {
+                        @foreach (var rec in SavedRecordings)
+                        {
+                            <div class="saved-recording-item">
+                                <div class="rec-info-col">
+                                    <span class="rec-name">@rec.Name</span>
+                                    <span class="rec-info">@rec.Actions.Count actions, @(rec.DurationMs / 1000)s</span>
+                                </div>
+                                <div class="rec-actions">
+                                    <button class="btn btn-xs btn-primary" title="Play" @onclick="() => StartReplay(rec)" disabled="@(IsRecording || IsReplaying)">▶</button>
+                                    <button class="btn btn-xs btn-secondary" title="Export JSON" @onclick="() => ExportRecordingJson(rec)">↓</button>
+                                    <button class="btn btn-xs btn-danger" title="Delete" @onclick="() => DeleteRecording(rec)" disabled="@(IsRecording || IsReplaying)">×</button>
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <span class="no-recordings">No saved recordings yet</span>
+                    }
+                </div>
             </div>
         </div>
     }
@@ -384,17 +635,56 @@
                                 <span class="slot-number">#1</span>
                                 <select @bind="Slot1Provider" class="slot-provider">
                                     <option value="">-- None --</option>
-                                    <option value="Ollama">Ollama</option>
+                                    <option value="OllamaLocal">Ollama (localhost)</option>
+                                    <option value="Ollama">Ollama (remote)</option>
                                     <option value="Anthropic">Anthropic</option>
                                     <option value="OpenAI">OpenAI</option>
                                     <option value="DeepSeek">DeepSeek</option>
                                 </select>
                                 @if (!CascadeService.CurrentMatrix.Slot1.IsEmpty)
                                 {
-                                    <input type="text" @bind="CascadeService.CurrentMatrix.Slot1.Model" placeholder="Model" class="slot-model" />
-                                    @if (CascadeService.CurrentMatrix.Slot1.Provider == "Ollama")
+                                    @if (CascadeService.CurrentMatrix.Slot1.Provider == "OllamaLocal")
                                     {
-                                        <input type="text" @bind="CascadeService.CurrentMatrix.Slot1.Endpoint" placeholder="localhost:11434" class="slot-endpoint" />
+                                        <button class="btn btn-xs btn-outline-primary" @onclick="() => RefreshCascadeSlotOllamaModels(1)" disabled="@CascadeSlot1Loading">
+                                            @(CascadeSlot1Loading ? "..." : "Refresh")
+                                        </button>
+                                        @if (CascadeSlot1OllamaModels.Count > 0)
+                                        {
+                                            <select @bind="CascadeService.CurrentMatrix.Slot1.Model" class="slot-model">
+                                                @foreach (var model in CascadeSlot1OllamaModels)
+                                                {
+                                                    <option value="@model">@model</option>
+                                                }
+                                            </select>
+                                        }
+                                        else
+                                        {
+                                            <input type="text" @bind="CascadeService.CurrentMatrix.Slot1.Model" placeholder="Model" class="slot-model" />
+                                        }
+                                    }
+                                    else if (CascadeService.CurrentMatrix.Slot1.Provider == "Ollama")
+                                    {
+                                        <input type="text" @bind="CascadeService.CurrentMatrix.Slot1.Endpoint" placeholder="host:11434" class="slot-endpoint" />
+                                        <button class="btn btn-xs btn-outline-primary" @onclick="() => RefreshCascadeSlotOllamaModels(1)" disabled="@CascadeSlot1Loading">
+                                            @(CascadeSlot1Loading ? "..." : "Connect")
+                                        </button>
+                                        @if (CascadeSlot1OllamaModels.Count > 0)
+                                        {
+                                            <select @bind="CascadeService.CurrentMatrix.Slot1.Model" class="slot-model">
+                                                @foreach (var model in CascadeSlot1OllamaModels)
+                                                {
+                                                    <option value="@model">@model</option>
+                                                }
+                                            </select>
+                                        }
+                                        else
+                                        {
+                                            <input type="text" @bind="CascadeService.CurrentMatrix.Slot1.Model" placeholder="Model" class="slot-model" />
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <input type="text" @bind="CascadeService.CurrentMatrix.Slot1.Model" placeholder="Model" class="slot-model" />
                                     }
                                 }
                             </div>
@@ -403,17 +693,56 @@
                                 <span class="slot-number">#2</span>
                                 <select @bind="Slot2Provider" class="slot-provider">
                                     <option value="">-- None --</option>
-                                    <option value="Ollama">Ollama</option>
+                                    <option value="OllamaLocal">Ollama (localhost)</option>
+                                    <option value="Ollama">Ollama (remote)</option>
                                     <option value="Anthropic">Anthropic</option>
                                     <option value="OpenAI">OpenAI</option>
                                     <option value="DeepSeek">DeepSeek</option>
                                 </select>
                                 @if (!CascadeService.CurrentMatrix.Slot2.IsEmpty)
                                 {
-                                    <input type="text" @bind="CascadeService.CurrentMatrix.Slot2.Model" placeholder="Model" class="slot-model" />
-                                    @if (CascadeService.CurrentMatrix.Slot2.Provider == "Ollama")
+                                    @if (CascadeService.CurrentMatrix.Slot2.Provider == "OllamaLocal")
                                     {
-                                        <input type="text" @bind="CascadeService.CurrentMatrix.Slot2.Endpoint" placeholder="localhost:11434" class="slot-endpoint" />
+                                        <button class="btn btn-xs btn-outline-primary" @onclick="() => RefreshCascadeSlotOllamaModels(2)" disabled="@CascadeSlot2Loading">
+                                            @(CascadeSlot2Loading ? "..." : "Refresh")
+                                        </button>
+                                        @if (CascadeSlot2OllamaModels.Count > 0)
+                                        {
+                                            <select @bind="CascadeService.CurrentMatrix.Slot2.Model" class="slot-model">
+                                                @foreach (var model in CascadeSlot2OllamaModels)
+                                                {
+                                                    <option value="@model">@model</option>
+                                                }
+                                            </select>
+                                        }
+                                        else
+                                        {
+                                            <input type="text" @bind="CascadeService.CurrentMatrix.Slot2.Model" placeholder="Model" class="slot-model" />
+                                        }
+                                    }
+                                    else if (CascadeService.CurrentMatrix.Slot2.Provider == "Ollama")
+                                    {
+                                        <input type="text" @bind="CascadeService.CurrentMatrix.Slot2.Endpoint" placeholder="host:11434" class="slot-endpoint" />
+                                        <button class="btn btn-xs btn-outline-primary" @onclick="() => RefreshCascadeSlotOllamaModels(2)" disabled="@CascadeSlot2Loading">
+                                            @(CascadeSlot2Loading ? "..." : "Connect")
+                                        </button>
+                                        @if (CascadeSlot2OllamaModels.Count > 0)
+                                        {
+                                            <select @bind="CascadeService.CurrentMatrix.Slot2.Model" class="slot-model">
+                                                @foreach (var model in CascadeSlot2OllamaModels)
+                                                {
+                                                    <option value="@model">@model</option>
+                                                }
+                                            </select>
+                                        }
+                                        else
+                                        {
+                                            <input type="text" @bind="CascadeService.CurrentMatrix.Slot2.Model" placeholder="Model" class="slot-model" />
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <input type="text" @bind="CascadeService.CurrentMatrix.Slot2.Model" placeholder="Model" class="slot-model" />
                                     }
                                 }
                             </div>
@@ -422,17 +751,56 @@
                                 <span class="slot-number">#3</span>
                                 <select @bind="Slot3Provider" class="slot-provider">
                                     <option value="">-- None --</option>
-                                    <option value="Ollama">Ollama</option>
+                                    <option value="OllamaLocal">Ollama (localhost)</option>
+                                    <option value="Ollama">Ollama (remote)</option>
                                     <option value="Anthropic">Anthropic</option>
                                     <option value="OpenAI">OpenAI</option>
                                     <option value="DeepSeek">DeepSeek</option>
                                 </select>
                                 @if (!CascadeService.CurrentMatrix.Slot3.IsEmpty)
                                 {
-                                    <input type="text" @bind="CascadeService.CurrentMatrix.Slot3.Model" placeholder="Model" class="slot-model" />
-                                    @if (CascadeService.CurrentMatrix.Slot3.Provider == "Ollama")
+                                    @if (CascadeService.CurrentMatrix.Slot3.Provider == "OllamaLocal")
                                     {
-                                        <input type="text" @bind="CascadeService.CurrentMatrix.Slot3.Endpoint" placeholder="localhost:11434" class="slot-endpoint" />
+                                        <button class="btn btn-xs btn-outline-primary" @onclick="() => RefreshCascadeSlotOllamaModels(3)" disabled="@CascadeSlot3Loading">
+                                            @(CascadeSlot3Loading ? "..." : "Refresh")
+                                        </button>
+                                        @if (CascadeSlot3OllamaModels.Count > 0)
+                                        {
+                                            <select @bind="CascadeService.CurrentMatrix.Slot3.Model" class="slot-model">
+                                                @foreach (var model in CascadeSlot3OllamaModels)
+                                                {
+                                                    <option value="@model">@model</option>
+                                                }
+                                            </select>
+                                        }
+                                        else
+                                        {
+                                            <input type="text" @bind="CascadeService.CurrentMatrix.Slot3.Model" placeholder="Model" class="slot-model" />
+                                        }
+                                    }
+                                    else if (CascadeService.CurrentMatrix.Slot3.Provider == "Ollama")
+                                    {
+                                        <input type="text" @bind="CascadeService.CurrentMatrix.Slot3.Endpoint" placeholder="host:11434" class="slot-endpoint" />
+                                        <button class="btn btn-xs btn-outline-primary" @onclick="() => RefreshCascadeSlotOllamaModels(3)" disabled="@CascadeSlot3Loading">
+                                            @(CascadeSlot3Loading ? "..." : "Connect")
+                                        </button>
+                                        @if (CascadeSlot3OllamaModels.Count > 0)
+                                        {
+                                            <select @bind="CascadeService.CurrentMatrix.Slot3.Model" class="slot-model">
+                                                @foreach (var model in CascadeSlot3OllamaModels)
+                                                {
+                                                    <option value="@model">@model</option>
+                                                }
+                                            </select>
+                                        }
+                                        else
+                                        {
+                                            <input type="text" @bind="CascadeService.CurrentMatrix.Slot3.Model" placeholder="Model" class="slot-model" />
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <input type="text" @bind="CascadeService.CurrentMatrix.Slot3.Model" placeholder="Model" class="slot-model" />
                                     }
                                 }
                             </div>
@@ -503,23 +871,35 @@
                     <div class="cascade-progress">
                         @foreach (var step in CascadeStepResults)
                         {
-                            <div class="cascade-progress-step @step.Status.ToString().ToLower() @(ExpandedCascadeStep == step.StepId ? "expanded" : "")">
+                            @* Auto-expand running steps or steps with content *@
+                            var isExpanded = ExpandedCascadeStep == step.StepId ||
+                                             step.Status == CascadeStepStatus.Running ||
+                                             (step.Status == CascadeStepStatus.Completed && CascadeStepResults.IndexOf(step) == CascadeStepResults.Count - 1);
+                            <div class="cascade-progress-step @step.Status.ToString().ToLower() @(isExpanded ? "expanded" : "")">
                                 <div class="step-header" @onclick="() => ToggleCascadeStep(step.StepId)">
                                     <span class="step-status-icon">@GetStatusIcon(step.Status)</span>
                                     <span class="step-name">@step.StepName</span>
-                                    <span class="step-time">@(step.ElapsedMs)ms</span>
-                                    @if (!string.IsNullOrEmpty(step.Output) || !string.IsNullOrEmpty(step.Error))
+                                    <span class="step-time">@(step.ElapsedMs > 0 ? $"{step.ElapsedMs}ms" : "...")</span>
+                                    @if (!string.IsNullOrEmpty(step.Output) || !string.IsNullOrEmpty(step.Input) || !string.IsNullOrEmpty(step.Error))
                                     {
-                                        <span class="step-expand-icon">@(ExpandedCascadeStep == step.StepId ? "▼" : "▶")</span>
+                                        <span class="step-expand-icon">@(isExpanded ? "▼" : "▶")</span>
                                     }
                                 </div>
-                                @if (ExpandedCascadeStep == step.StepId && !string.IsNullOrEmpty(step.Output))
+                                @if (isExpanded && !string.IsNullOrEmpty(step.Input))
+                                {
+                                    <div class="step-input">
+                                        <label>Input:</label>
+                                        <pre>@TruncateOutput(step.Input, 1000)</pre>
+                                    </div>
+                                }
+                                @if (isExpanded && !string.IsNullOrEmpty(step.Output))
                                 {
                                     <div class="step-output">
+                                        <label>Output:</label>
                                         <pre>@TruncateOutput(step.Output, 2000)</pre>
                                     </div>
                                 }
-                                @if (ExpandedCascadeStep == step.StepId && !string.IsNullOrEmpty(step.Error))
+                                @if (isExpanded && !string.IsNullOrEmpty(step.Error))
                                 {
                                     <div class="step-error">
                                         <pre>@step.Error</pre>
@@ -560,7 +940,14 @@
     private ElementReference containerElement;
     private ElementReference textInputElement;
     private ElementReference fileInputElement;
-    private List<VectorElement> Elements = new();
+    private List<Layer> Layers = new() { new Layer { Name = "Layer 1" } };
+    private int CurrentLayerIndex = 0;
+    private Layer CurrentLayer => Layers[CurrentLayerIndex];
+    private List<VectorElement> Elements => Layers.Where(l => l.IsVisible).SelectMany(l => l.Elements).ToList();
+    private bool ShowLayersPanel = false;
+    private bool ShowDeleteLayerDialog = false;
+    private bool ShowCleanupDialog = false;
+    private CleanupResult? LastCleanupResult;
     private bool IsImporting = false;
     private string? ImportMessage;
     private VectorElement? CurrentElement;
@@ -582,6 +969,16 @@
     private const int MaxElements = 500;
     private bool TouchEnabled = true;
 
+    // SVG coordinate transformation (screen coords -> viewBox coords)
+    private double SvgScaleX = 1.0;
+    private double SvgScaleY = 1.0;
+    private double SvgOffsetX = 0;
+    private double SvgOffsetY = 0;
+
+    // Theme
+    private string CurrentTheme = "";
+    private string CurrentThemeClass => string.IsNullOrEmpty(CurrentTheme) ? "" : $"theme-{CurrentTheme}";
+
     // Text input modal
     private bool ShowTextInput = false;
     private string TextInputValue = "";
@@ -601,13 +998,21 @@
     private bool IsMoving = false;
     private bool IsResizing = false;
     private Point? DragStart;
+    private double MoveTotalDeltaX = 0; // Track total move delta for recording
+    private double MoveTotalDeltaY = 0;
     private string? ResizeHandle; // "nw", "ne", "sw", "se", "n", "s", "e", "w"
     private BoundingBox? OriginalBounds;
     private VectorElement? OriginalElementSnapshot; // Store original element state for resize
+    private Dictionary<string, BoundingBox>? OriginalElementBounds; // For group scaling
+    private Dictionary<string, VectorElement>? OriginalElementSnapshots; // For group scaling (full element clones)
 
     // Undo stack - stores JSON snapshots of Elements list
     private Stack<string> UndoStack = new();
     private const int MaxUndoSteps = 50;
+
+    // Clipboard for copy/paste
+    private List<VectorElement> Clipboard = new();
+    private int PasteCount = 0; // Track pastes for offset
 
     // Chain mode - successive clicks continue from last endpoint
     private bool ChainMode = false;
@@ -633,6 +1038,18 @@
     private long CascadeTotalMs = 0;
     private int _selectedPresetIndex = 0;
     private string? ExpandedCascadeStep = null;
+
+    // Recording state
+    private bool IsRecording = false;
+    private bool IsReplaying = false;
+    private bool ShowRecordingPanel = false;
+    private Recording? CurrentRecording;
+    private List<Recording> SavedRecordings = new();
+    private System.Diagnostics.Stopwatch? RecordingStopwatch;
+    private int ReplayIndex = 0;
+    private System.Threading.CancellationTokenSource? ReplayCts;
+    private string RecordingName = "My Recording";
+    private string SelectedReplayId = "";
 
     // Property to set Anthropic key in cascade mode - shares with AiService.ApiKey
     private string CascadeAnthropicKeyInput
@@ -820,6 +1237,14 @@
     private bool OllamaModelsLoading = false;
     private string? OllamaStatus = null;
     private bool OllamaStatusIsError = false;
+
+    // Cascade Ollama state (per-slot)
+    private List<string> CascadeSlot1OllamaModels = new();
+    private List<string> CascadeSlot2OllamaModels = new();
+    private List<string> CascadeSlot3OllamaModels = new();
+    private bool CascadeSlot1Loading = false;
+    private bool CascadeSlot2Loading = false;
+    private bool CascadeSlot3Loading = false;
     private string OllamaEndpointInput
     {
         get => AiService.OllamaEndpoint;
@@ -893,15 +1318,234 @@
         if (firstRender)
         {
             await JS.InvokeVoidAsync("setupPasteHandler", DotNetObjectReference.Create(this));
+            // Load saved theme
+            var savedTheme = await JS.InvokeAsync<string>("localStorage.getItem", "vecsketch-theme");
+            if (!string.IsNullOrEmpty(savedTheme))
+            {
+                CurrentTheme = savedTheme;
+                // Set appropriate stroke color for loaded theme
+                if (CurrentTheme == "darkish")
+                {
+                    StrokeColor = "#ffffff";
+                }
+            }
+            // Initialize SVG scale info
+            await UpdateSvgScaleInfo();
+
+            // Subscribe to cascade step progress for real-time updates
+            CascadeService.OnStepProgress += HandleCascadeStepProgress;
+
             StateHasChanged();
         }
+    }
+
+    private void HandleCascadeStepProgress(CascadeStepProgress stepProgress)
+    {
+        // Find existing step or add new one by StepId
+        var existing = CascadeStepResults.FirstOrDefault(s => s.StepId == stepProgress.StepId);
+        if (existing != null)
+        {
+            // Update existing step
+            var index = CascadeStepResults.IndexOf(existing);
+            CascadeStepResults[index] = stepProgress;
+        }
+        else
+        {
+            // Add new step
+            CascadeStepResults.Add(stepProgress);
+        }
+
+        // Trigger UI update on the UI thread
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        CascadeService.OnStepProgress -= HandleCascadeStepProgress;
+    }
+
+    private async Task UpdateSvgScaleInfo()
+    {
+        try
+        {
+            var scaleInfo = await JS.InvokeAsync<SvgScaleInfo>("getSvgScaleInfo", svgElement);
+            if (scaleInfo != null && scaleInfo.ScaleX > 0 && scaleInfo.ScaleY > 0)
+            {
+                SvgScaleX = scaleInfo.ScaleX;
+                SvgScaleY = scaleInfo.ScaleY;
+                SvgOffsetX = scaleInfo.ViewBoxOffsetX;
+                SvgOffsetY = scaleInfo.ViewBoxOffsetY;
+            }
+        }
+        catch { /* Ignore errors during scale info update */ }
+    }
+
+    private record SvgScaleInfo(double ScaleX, double ScaleY, double ViewBoxOffsetX, double ViewBoxOffsetY);
+
+    // Transform element-relative offset coordinates to SVG viewBox coordinates
+    // offsetX/offsetY are from pointer events (relative to the SVG element)
+    private (double X, double Y) TransformToSvgCoords(double offsetX, double offsetY)
+    {
+        if (SvgScaleX <= 0 || SvgScaleY <= 0)
+            return (offsetX, offsetY);
+
+        // Formula: svg_coord = (offset - viewBoxOffset) / scale
+        // viewBoxOffset accounts for centering due to preserveAspectRatio="xMidYMid meet"
+        var svgX = (offsetX - SvgOffsetX) / SvgScaleX;
+        var svgY = (offsetY - SvgOffsetY) / SvgScaleY;
+
+        return (svgX, svgY);
+    }
+
+    private async Task OnThemeChanged()
+    {
+        await JS.InvokeVoidAsync("localStorage.setItem", "vecsketch-theme", CurrentTheme);
+
+        // Auto-change stroke color for dark/light themes
+        if (CurrentTheme == "darkish")
+        {
+            StrokeColor = "#ffffff"; // White strokes for dark theme
+        }
+        else if (StrokeColor == "#ffffff")
+        {
+            StrokeColor = "#000000"; // Reset to black when switching away from dark theme
+        }
+        StateHasChanged();
     }
 
     private string GetFill() => UseFill ? FillColor : "none";
 
     private void OnPasteClick() => _ = JS.InvokeVoidAsync("pasteFromClipboard");
-    private void OnClearClick() { SaveUndoState(); Elements.Clear(); ClearSelection(); StateHasChanged(); }
+    private void OnClearClick() { SaveUndoState(); foreach (var layer in Layers) layer.Elements.Clear(); ClearSelection(); StateHasChanged(); }
     private void OnUndoClick() { Undo(); }
+    private void OnCleanupClick() { LastCleanupResult = CleanupCanvas(); ShowCleanupDialog = true; StateHasChanged(); }
+
+    private record CleanupResult(
+        int EmptyLayersRemoved,
+        int DegenerateShapesRemoved,
+        int OffCanvasRemoved,
+        int TinyElementsRemoved,
+        int InvisibleRemoved,
+        int SinglePointPathsRemoved,
+        int OrphanGroupsFixed)
+    {
+        public int TotalRemoved => EmptyLayersRemoved + DegenerateShapesRemoved + OffCanvasRemoved +
+                                   TinyElementsRemoved + InvisibleRemoved + SinglePointPathsRemoved;
+    }
+
+    private CleanupResult CleanupCanvas()
+    {
+        SaveUndoState();
+        ClearSelection();
+
+        int emptyLayers = 0, degenerateShapes = 0, offCanvas = 0, tinyElements = 0, invisible = 0, singlePointPaths = 0, orphanGroups = 0;
+        const double MinSize = 2.0;
+
+        // Remove problematic elements from all layers
+        foreach (var layer in Layers)
+        {
+            var toRemove = new List<VectorElement>();
+
+            foreach (var el in layer.Elements)
+            {
+                var bounds = el.GetBounds();
+
+                // Check for degenerate shapes (zero or negative dimensions)
+                if (bounds.Width <= 0 || bounds.Height <= 0)
+                {
+                    // Exception: lines can have 0 width OR 0 height (but not both)
+                    if (el is LineElement line)
+                    {
+                        if (Math.Abs(line.X2 - line.X1) < 0.1 && Math.Abs(line.Y2 - line.Y1) < 0.1)
+                        {
+                            toRemove.Add(el);
+                            degenerateShapes++;
+                            continue;
+                        }
+                    }
+                    else
+                    {
+                        toRemove.Add(el);
+                        degenerateShapes++;
+                        continue;
+                    }
+                }
+
+                // Check for off-canvas elements (completely outside)
+                if (bounds.X + bounds.Width < 0 || bounds.X > CanvasWidth ||
+                    bounds.Y + bounds.Height < 0 || bounds.Y > CanvasHeight)
+                {
+                    toRemove.Add(el);
+                    offCanvas++;
+                    continue;
+                }
+
+                // Check for tiny elements
+                if (bounds.Width < MinSize && bounds.Height < MinSize && el is not LineElement)
+                {
+                    toRemove.Add(el);
+                    tinyElements++;
+                    continue;
+                }
+
+                // Check for invisible elements (both stroke and fill are none/transparent)
+                if ((el.Stroke == "none" || el.Stroke == "transparent" || string.IsNullOrEmpty(el.Stroke)) &&
+                    (el.Fill == "none" || el.Fill == "transparent" || string.IsNullOrEmpty(el.Fill)))
+                {
+                    toRemove.Add(el);
+                    invisible++;
+                    continue;
+                }
+
+                // Check for single-point paths
+                if (el is PathElement path && path.Points.Count < 2)
+                {
+                    toRemove.Add(el);
+                    singlePointPaths++;
+                    continue;
+                }
+            }
+
+            foreach (var el in toRemove)
+                layer.Elements.Remove(el);
+        }
+
+        // Fix orphan groups (groups with only 1 member)
+        var allElements = Layers.SelectMany(l => l.Elements).ToList();
+        var groupCounts = allElements
+            .Where(e => !string.IsNullOrEmpty(e.GroupId))
+            .GroupBy(e => e.GroupId)
+            .ToDictionary(g => g.Key!, g => g.Count());
+
+        foreach (var el in allElements)
+        {
+            if (!string.IsNullOrEmpty(el.GroupId) && groupCounts.TryGetValue(el.GroupId, out var count) && count == 1)
+            {
+                el.GroupId = null;
+                orphanGroups++;
+            }
+        }
+
+        // Remove empty layers (keep at least one)
+        if (Layers.Count > 1)
+        {
+            var emptyLayersList = Layers.Where(l => l.Elements.Count == 0).ToList();
+            foreach (var layer in emptyLayersList)
+            {
+                if (Layers.Count > 1)
+                {
+                    Layers.Remove(layer);
+                    emptyLayers++;
+                }
+            }
+            // Ensure CurrentLayerIndex is valid
+            if (CurrentLayerIndex >= Layers.Count)
+                CurrentLayerIndex = Layers.Count - 1;
+        }
+
+        InputHint = $"Cleanup: removed {degenerateShapes + offCanvas + tinyElements + invisible + singlePointPaths} elements, {emptyLayers} layers";
+        return new CleanupResult(emptyLayers, degenerateShapes, offCanvas, tinyElements, invisible, singlePointPaths, orphanGroups);
+    }
 
     private void SaveUndoState()
     {
@@ -931,44 +1575,87 @@
 
     private string SerializeElements()
     {
-        var data = Elements.Select(e => new ElementData
+        var layersData = Layers.Select(layer => new LayerData
         {
-            Type = e.GetType().Name,
-            Stroke = e.Stroke,
-            StrokeWidth = e.StrokeWidth,
-            Fill = e.Fill,
-            Json = System.Text.Json.JsonSerializer.Serialize(e, e.GetType())
+            Id = layer.Id,
+            Name = layer.Name,
+            IsVisible = layer.IsVisible,
+            IsLocked = layer.IsLocked,
+            Opacity = layer.Opacity,
+            Elements = layer.Elements.Select(e => new ElementData
+            {
+                Type = e.GetType().Name,
+                Stroke = e.Stroke,
+                StrokeWidth = e.StrokeWidth,
+                Fill = e.Fill,
+                Json = System.Text.Json.JsonSerializer.Serialize(e, e.GetType())
+            }).ToList()
         }).ToList();
-        return System.Text.Json.JsonSerializer.Serialize(data);
+
+        var state = new CanvasState { Layers = layersData, CurrentLayerIndex = CurrentLayerIndex };
+        return System.Text.Json.JsonSerializer.Serialize(state);
     }
 
     private void DeserializeElements(string snapshot)
     {
-        var data = System.Text.Json.JsonSerializer.Deserialize<List<ElementData>>(snapshot);
-        if (data == null) return;
+        var state = System.Text.Json.JsonSerializer.Deserialize<CanvasState>(snapshot);
+        if (state?.Layers == null) return;
 
-        Elements.Clear();
-        foreach (var item in data)
+        Layers.Clear();
+        foreach (var layerData in state.Layers)
         {
-            VectorElement? el = item.Type switch
+            var layer = new Layer
             {
-                "LineElement" => System.Text.Json.JsonSerializer.Deserialize<LineElement>(item.Json),
-                "PathElement" => System.Text.Json.JsonSerializer.Deserialize<PathElement>(item.Json),
-                "RectElement" => System.Text.Json.JsonSerializer.Deserialize<RectElement>(item.Json),
-                "CircleElement" => System.Text.Json.JsonSerializer.Deserialize<CircleElement>(item.Json),
-                "EllipseElement" => System.Text.Json.JsonSerializer.Deserialize<EllipseElement>(item.Json),
-                "TriangleElement" => System.Text.Json.JsonSerializer.Deserialize<TriangleElement>(item.Json),
-                "PolygonElement" => System.Text.Json.JsonSerializer.Deserialize<PolygonElement>(item.Json),
-                "StarElement" => System.Text.Json.JsonSerializer.Deserialize<StarElement>(item.Json),
-                "ArrowElement" => System.Text.Json.JsonSerializer.Deserialize<ArrowElement>(item.Json),
-                "ImageElement" => System.Text.Json.JsonSerializer.Deserialize<ImageElement>(item.Json),
-                "TextElement" => System.Text.Json.JsonSerializer.Deserialize<TextElement>(item.Json),
-                "SvgPathElement" => System.Text.Json.JsonSerializer.Deserialize<SvgPathElement>(item.Json),
-                _ => null
+                Id = layerData.Id,
+                Name = layerData.Name,
+                IsVisible = layerData.IsVisible,
+                IsLocked = layerData.IsLocked,
+                Opacity = layerData.Opacity
             };
-            if (el != null)
-                Elements.Add(el);
+
+            foreach (var item in layerData.Elements)
+            {
+                VectorElement? el = item.Type switch
+                {
+                    "LineElement" => System.Text.Json.JsonSerializer.Deserialize<LineElement>(item.Json),
+                    "PathElement" => System.Text.Json.JsonSerializer.Deserialize<PathElement>(item.Json),
+                    "RectElement" => System.Text.Json.JsonSerializer.Deserialize<RectElement>(item.Json),
+                    "CircleElement" => System.Text.Json.JsonSerializer.Deserialize<CircleElement>(item.Json),
+                    "EllipseElement" => System.Text.Json.JsonSerializer.Deserialize<EllipseElement>(item.Json),
+                    "TriangleElement" => System.Text.Json.JsonSerializer.Deserialize<TriangleElement>(item.Json),
+                    "PolygonElement" => System.Text.Json.JsonSerializer.Deserialize<PolygonElement>(item.Json),
+                    "StarElement" => System.Text.Json.JsonSerializer.Deserialize<StarElement>(item.Json),
+                    "ArrowElement" => System.Text.Json.JsonSerializer.Deserialize<ArrowElement>(item.Json),
+                    "ImageElement" => System.Text.Json.JsonSerializer.Deserialize<ImageElement>(item.Json),
+                    "TextElement" => System.Text.Json.JsonSerializer.Deserialize<TextElement>(item.Json),
+                    "SvgPathElement" => System.Text.Json.JsonSerializer.Deserialize<SvgPathElement>(item.Json),
+                    _ => null
+                };
+                if (el != null)
+                    layer.Elements.Add(el);
+            }
+            Layers.Add(layer);
         }
+
+        CurrentLayerIndex = Math.Min(state.CurrentLayerIndex, Layers.Count - 1);
+        if (Layers.Count == 0)
+            Layers.Add(new Layer { Name = "Layer 1" });
+    }
+
+    private class CanvasState
+    {
+        public List<LayerData> Layers { get; set; } = new();
+        public int CurrentLayerIndex { get; set; }
+    }
+
+    private class LayerData
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public bool IsVisible { get; set; } = true;
+        public bool IsLocked { get; set; } = false;
+        public double Opacity { get; set; } = 1.0;
+        public List<ElementData> Elements { get; set; } = new();
     }
 
     private class ElementData
@@ -999,7 +1686,8 @@
         await JS.InvokeVoidAsync("triggerFileInput", fileInputElement);
     }
 
-    private static readonly string[] ImageExtensions = { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg" };
+    private static readonly string[] ImageExtensions = { ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp" };
+    private static readonly string[] VectorExtensions = { ".svg" };
 
     private async Task OnFileSelected(ChangeEventArgs e)
     {
@@ -1026,6 +1714,13 @@
             if (ImageExtensions.Contains(extension))
             {
                 await ImportImageFile(fileData, extension);
+                return;
+            }
+
+            // Handle SVG files - parse as vector elements
+            if (VectorExtensions.Contains(extension))
+            {
+                await ImportSvgFile(fileData);
                 return;
             }
 
@@ -1062,7 +1757,7 @@
                 {
                     var element = ConvertImportedElement(el, scale, offsetX, offsetY);
                     if (element != null)
-                        Elements.Add(element);
+                        CurrentLayer.Elements.Add(element);
                 }
                 ImportMessage = result.Message;
             }
@@ -1129,7 +1824,7 @@
                 DataUrl = dataUrl
             };
 
-            Elements.Add(imageElement);
+            CurrentLayer.Elements.Add(imageElement);
             ImportMessage = $"Imported {fileData.Name}";
         }
         finally
@@ -1137,6 +1832,256 @@
             IsImporting = false;
             StateHasChanged();
         }
+    }
+
+    private async Task ImportSvgFile(FileData fileData)
+    {
+        try
+        {
+            // Decode base64 SVG content
+            var svgBytes = Convert.FromBase64String(fileData.Data);
+            var svgContent = System.Text.Encoding.UTF8.GetString(svgBytes);
+
+            // Parse SVG using JavaScript (browser's DOMParser)
+            var elements = await JS.InvokeAsync<List<SvgImportElement>>("parseSvgContent", svgContent);
+
+            if (elements == null || elements.Count == 0)
+            {
+                ImportMessage = "No vector elements found in SVG";
+                return;
+            }
+
+            // Calculate bounds of all elements
+            double minX = double.MaxValue, minY = double.MaxValue;
+            double maxX = double.MinValue, maxY = double.MinValue;
+
+            foreach (var el in elements)
+            {
+                minX = Math.Min(minX, el.X);
+                minY = Math.Min(minY, el.Y);
+                maxX = Math.Max(maxX, el.X + el.Width);
+                maxY = Math.Max(maxY, el.Y + el.Height);
+            }
+
+            var importWidth = maxX - minX;
+            var importHeight = maxY - minY;
+
+            // Scale to fit canvas
+            var scale = 1.0;
+            var maxWidth = CanvasWidth * 0.8;
+            var maxHeight = CanvasHeight * 0.8;
+
+            if (importWidth > maxWidth)
+                scale = maxWidth / importWidth;
+            if (importHeight * scale > maxHeight)
+                scale = maxHeight / importHeight;
+
+            // Center offset
+            var offsetX = (CanvasWidth - importWidth * scale) / 2 - minX * scale;
+            var offsetY = (CanvasHeight - importHeight * scale) / 2 - minY * scale;
+
+            // Convert and add elements
+            int count = 0;
+            foreach (var el in elements)
+            {
+                var element = ConvertSvgElement(el, scale, offsetX, offsetY);
+                if (element != null)
+                {
+                    CurrentLayer.Elements.Add(element);
+                    count++;
+                }
+            }
+
+            ImportMessage = $"Imported {count} elements from {fileData.Name}";
+        }
+        catch (Exception ex)
+        {
+            ImportMessage = $"SVG import error: {ex.Message}";
+        }
+        finally
+        {
+            IsImporting = false;
+            StateHasChanged();
+        }
+    }
+
+    private VectorElement? ConvertSvgElement(SvgImportElement el, double scale, double offsetX, double offsetY)
+    {
+        var stroke = string.IsNullOrEmpty(el.Stroke) || el.Stroke == "none" ? "#000000" : el.Stroke;
+        var fill = string.IsNullOrEmpty(el.Fill) ? "none" : el.Fill;
+        var strokeWidth = el.StrokeWidth > 0 ? el.StrokeWidth * scale : 2;
+
+        switch (el.Type)
+        {
+            case "rect":
+                return new RectElement
+                {
+                    X = el.X * scale + offsetX,
+                    Y = el.Y * scale + offsetY,
+                    Width = el.Width * scale,
+                    Height = el.Height * scale,
+                    Stroke = stroke,
+                    StrokeWidth = strokeWidth,
+                    Fill = fill
+                };
+
+            case "circle":
+                return new CircleElement
+                {
+                    Cx = el.Cx * scale + offsetX,
+                    Cy = el.Cy * scale + offsetY,
+                    Radius = el.R * scale,
+                    Stroke = stroke,
+                    StrokeWidth = strokeWidth,
+                    Fill = fill
+                };
+
+            case "ellipse":
+                return new EllipseElement
+                {
+                    Cx = el.Cx * scale + offsetX,
+                    Cy = el.Cy * scale + offsetY,
+                    Rx = el.Rx * scale,
+                    Ry = el.Ry * scale,
+                    Stroke = stroke,
+                    StrokeWidth = strokeWidth,
+                    Fill = fill
+                };
+
+            case "line":
+                return new LineElement
+                {
+                    X1 = el.X1 * scale + offsetX,
+                    Y1 = el.Y1 * scale + offsetY,
+                    X2 = el.X2 * scale + offsetX,
+                    Y2 = el.Y2 * scale + offsetY,
+                    Stroke = stroke,
+                    StrokeWidth = strokeWidth
+                };
+
+            case "path":
+                if (string.IsNullOrEmpty(el.D)) return null;
+                return new SvgPathElement
+                {
+                    D = ScaleSvgPathData(el.D, scale, offsetX, offsetY),
+                    Stroke = stroke,
+                    StrokeWidth = strokeWidth,
+                    Fill = fill
+                };
+
+            case "polygon":
+            case "polyline":
+                if (string.IsNullOrEmpty(el.Points)) return null;
+                var pathD = ConvertPointsToPath(el.Points, el.Type == "polygon", scale, offsetX, offsetY);
+                return new SvgPathElement
+                {
+                    D = pathD,
+                    Stroke = stroke,
+                    StrokeWidth = strokeWidth,
+                    Fill = el.Type == "polygon" ? fill : "none"
+                };
+
+            default:
+                return null;
+        }
+    }
+
+    private string ScaleSvgPathData(string d, double scale, double offsetX, double offsetY)
+    {
+        // Simple path scaling - handles M, L, C, Q, Z commands
+        var result = new System.Text.StringBuilder();
+        var parts = System.Text.RegularExpressions.Regex.Split(d, @"(?=[MLCQZmlcqzHVhvSsTtAa])");
+
+        foreach (var part in parts)
+        {
+            if (string.IsNullOrWhiteSpace(part)) continue;
+
+            var cmd = part[0];
+            var coords = part.Substring(1).Trim();
+
+            if (cmd == 'Z' || cmd == 'z')
+            {
+                result.Append(cmd);
+                continue;
+            }
+
+            var numbers = System.Text.RegularExpressions.Regex.Matches(coords, @"-?[\d.]+");
+            var values = numbers.Cast<System.Text.RegularExpressions.Match>()
+                .Select(m => double.TryParse(m.Value, System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0)
+                .ToList();
+
+            result.Append(cmd);
+
+            // Scale coordinates based on command type
+            bool isRelative = char.IsLower(cmd);
+            for (int i = 0; i < values.Count; i++)
+            {
+                if (i > 0) result.Append(' ');
+
+                var val = values[i];
+                if (isRelative)
+                {
+                    // Relative commands - just scale
+                    result.Append((val * scale).ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+                }
+                else
+                {
+                    // Absolute commands - scale and offset
+                    bool isX = (i % 2 == 0);
+                    var offset = isX ? offsetX : offsetY;
+                    result.Append((val * scale + offset).ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+                }
+            }
+        }
+
+        return result.ToString();
+    }
+
+    private string ConvertPointsToPath(string points, bool closePath, double scale, double offsetX, double offsetY)
+    {
+        var result = new System.Text.StringBuilder();
+        var coords = System.Text.RegularExpressions.Regex.Matches(points, @"-?[\d.]+");
+        var values = coords.Cast<System.Text.RegularExpressions.Match>()
+            .Select(m => double.TryParse(m.Value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0)
+            .ToList();
+
+        for (int i = 0; i < values.Count - 1; i += 2)
+        {
+            var x = values[i] * scale + offsetX;
+            var y = values[i + 1] * scale + offsetY;
+            result.Append(i == 0 ? "M " : " L ");
+            result.Append(x.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+            result.Append(' ');
+            result.Append(y.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+        }
+
+        if (closePath) result.Append(" Z");
+        return result.ToString();
+    }
+
+    private class SvgImportElement
+    {
+        public string Type { get; set; } = "";
+        public double X { get; set; }
+        public double Y { get; set; }
+        public double Width { get; set; }
+        public double Height { get; set; }
+        public double Cx { get; set; }
+        public double Cy { get; set; }
+        public double R { get; set; }
+        public double Rx { get; set; }
+        public double Ry { get; set; }
+        public double X1 { get; set; }
+        public double Y1 { get; set; }
+        public double X2 { get; set; }
+        public double Y2 { get; set; }
+        public string? D { get; set; }
+        public string? Points { get; set; }
+        public string? Stroke { get; set; }
+        public string? Fill { get; set; }
+        public double StrokeWidth { get; set; }
     }
 
     private class ImageDimensions
@@ -1307,7 +2252,7 @@
             DataUrl = dataUrl
         };
 
-        Elements.Add(imageElement);
+        CurrentLayer.Elements.Add(imageElement);
         StateHasChanged();
     }
 
@@ -1320,20 +2265,26 @@
         StateHasChanged();
     }
 
-    private void OnPointerDown(PointerEventArgs e)
+    private async Task OnPointerDown(PointerEventArgs e)
     {
+        // Update SVG scale info in case window was resized
+        await UpdateSvgScaleInfo();
+
         // Update input hint based on pointer type
         InputHint = $"{GetPointerType(e)} active";
         CurrentPressure = e.Pressure > 0 ? e.Pressure : 1.0;
 
+        // Transform pointer coordinates from element space to SVG viewBox space
+        var (px, py) = TransformToSvgCoords(e.OffsetX, e.OffsetY);
+
         // Handle selection tool
         if (CurrentTool == DrawingTool.Select)
         {
-            var clickX = e.OffsetX;
-            var clickY = e.OffsetY;
+            var clickX = px;
+            var clickY = py;
 
-            // Check if clicking on a resize handle (single selection only)
-            if (SelectedElements.Count == 1)
+            // Check if clicking on a resize handle (works for single or group selection)
+            if (SelectedElements.Count > 0)
             {
                 var handle = GetResizeHandleAt(clickX, clickY);
                 if (handle != null)
@@ -1342,8 +2293,17 @@
                     IsResizing = true;
                     ResizeHandle = handle;
                     DragStart = new Point(clickX, clickY);
-                    OriginalBounds = SelectedElements[0].GetBounds();
-                    OriginalElementSnapshot = CloneElement(SelectedElements[0]);
+                    OriginalBounds = GetGroupBounds();
+                    // Store original bounds and snapshots for each element (for group scaling)
+                    OriginalElementBounds = SelectedElements.ToDictionary(el => el.Id, el => el.GetBounds());
+                    OriginalElementSnapshots = SelectedElements
+                        .Select(el => (el.Id, Clone: CloneElement(el)))
+                        .Where(x => x.Clone != null)
+                        .ToDictionary(x => x.Id, x => x.Clone!);
+                    if (SelectedElements.Count == 1)
+                    {
+                        OriginalElementSnapshot = CloneElement(SelectedElements[0]);
+                    }
                     return;
                 }
             }
@@ -1358,21 +2318,30 @@
                         // Start moving
                         SaveUndoState();
                         IsMoving = true;
+                        MoveTotalDeltaX = 0;
+                        MoveTotalDeltaY = 0;
                         DragStart = new Point(clickX, clickY);
                         return;
                     }
                 }
             }
 
-            // Try to hit-test an element (reverse order for top-most first)
+            // Try to hit-test an element (reverse order for top-most first, skip locked layers)
             VectorElement? hitElement = null;
-            for (int i = Elements.Count - 1; i >= 0; i--)
+            for (int i = Layers.Count - 1; i >= 0; i--)
             {
-                if (Elements[i].HitTest(clickX, clickY))
+                var layer = Layers[i];
+                if (!layer.IsVisible || layer.IsLocked) continue;
+
+                for (int j = layer.Elements.Count - 1; j >= 0; j--)
                 {
-                    hitElement = Elements[i];
-                    break;
+                    if (layer.Elements[j].HitTest(clickX, clickY))
+                    {
+                        hitElement = layer.Elements[j];
+                        break;
+                    }
                 }
+                if (hitElement != null) break;
             }
 
             if (hitElement != null)
@@ -1383,15 +2352,23 @@
 
                 hitElement.IsSelected = !hitElement.IsSelected;
                 if (hitElement.IsSelected)
+                {
                     SelectedElements.Add(hitElement);
+                    // Also select all elements in the same group
+                    SelectGroupMembers(hitElement);
+                }
                 else
+                {
                     SelectedElements.Remove(hitElement);
+                }
 
                 // Start moving immediately after selecting
                 if (hitElement.IsSelected)
                 {
                     SaveUndoState();
                     IsMoving = true;
+                    MoveTotalDeltaX = 0;
+                    MoveTotalDeltaY = 0;
                     DragStart = new Point(clickX, clickY);
                 }
             }
@@ -1407,10 +2384,17 @@
             return;
         }
 
+        // Don't allow drawing on locked layers
+        if (CurrentLayer.IsLocked)
+        {
+            InputHint = "Layer is locked - unlock to draw";
+            return;
+        }
+
         // Handle text tool - show input modal
         if (CurrentTool == DrawingTool.Text)
         {
-            TextPosition = new Point(e.OffsetX, e.OffsetY);
+            TextPosition = new Point(px, py);
             TextInputValue = "";
             ShowTextInput = true;
             return;
@@ -1427,8 +2411,8 @@
         }
         else
         {
-            startX = e.OffsetX;
-            startY = e.OffsetY;
+            startX = px;
+            startY = py;
             // Record the original start point for closing the chain
             if (ChainMode && ChainStartPoint == null)
             {
@@ -1442,7 +2426,7 @@
             DrawingTool.Line => new LineElement
             {
                 X1 = startX, Y1 = startY,
-                X2 = e.OffsetX, Y2 = e.OffsetY,
+                X2 = px, Y2 = py,
                 Stroke = StrokeColor, StrokeWidth = StrokeWidth
             },
             DrawingTool.Pencil => new PathElement
@@ -1489,7 +2473,7 @@
             DrawingTool.Arrow => new ArrowElement
             {
                 X1 = startX, Y1 = startY,
-                X2 = e.OffsetX, Y2 = e.OffsetY,
+                X2 = px, Y2 = py,
                 Stroke = StrokeColor, StrokeWidth = StrokeWidth
             },
             _ => null
@@ -1498,28 +2482,58 @@
 
     private void OnPointerMove(PointerEventArgs e)
     {
+        // Transform pointer coordinates from element space to SVG viewBox space
+        var (px, py) = TransformToSvgCoords(e.OffsetX, e.OffsetY);
+
         // Handle moving selected elements
         if (IsMoving && DragStart != null)
         {
-            var dx = e.OffsetX - DragStart.X;
-            var dy = e.OffsetY - DragStart.Y;
-            foreach (var el in SelectedElements)
+            var dx = px - DragStart.X;
+            var dy = py - DragStart.Y;
+            MoveTotalDeltaX += dx;
+            MoveTotalDeltaY += dy;
+
+            // Collect all elements to move (selected + their group members)
+            var elementsToMove = new HashSet<VectorElement>(SelectedElements);
+            foreach (var sel in SelectedElements)
+            {
+                if (!string.IsNullOrEmpty(sel.GroupId))
+                {
+                    foreach (var layer in Layers)
+                    {
+                        foreach (var el in layer.Elements)
+                        {
+                            if (el.GroupId == sel.GroupId)
+                                elementsToMove.Add(el);
+                        }
+                    }
+                }
+            }
+
+            foreach (var el in elementsToMove)
                 MoveElement(el, dx, dy);
-            DragStart = new Point(e.OffsetX, e.OffsetY);
+            DragStart = new Point(px, py);
             return;
         }
 
-        // Handle resizing
-        if (IsResizing && DragStart != null && OriginalBounds != null && SelectedElements.Count == 1)
+        // Handle resizing (single or group)
+        if (IsResizing && DragStart != null && OriginalBounds != null && SelectedElements.Count > 0)
         {
-            ResizeElement(SelectedElements[0], e.OffsetX, e.OffsetY);
+            if (SelectedElements.Count == 1)
+            {
+                ResizeElement(SelectedElements[0], px, py);
+            }
+            else
+            {
+                ResizeGroup(px, py);
+            }
             return;
         }
 
         // Handle area selection
         if (IsSelecting && SelectionStart != null)
         {
-            SelectionEnd = new Point(e.OffsetX, e.OffsetY);
+            SelectionEnd = new Point(px, py);
             return;
         }
 
@@ -1532,11 +2546,11 @@
         switch (CurrentElement)
         {
             case LineElement line:
-                line.X2 = e.OffsetX;
-                line.Y2 = e.OffsetY;
+                line.X2 = px;
+                line.Y2 = py;
                 break;
             case PathElement path:
-                path.Points.Add(new Point(e.OffsetX, e.OffsetY));
+                path.Points.Add(new Point(px, py));
                 // Optionally adjust stroke width based on pressure for pen
                 if (e.PointerType == "pen" && e.Pressure > 0)
                 {
@@ -1544,46 +2558,46 @@
                 }
                 break;
             case RectElement rect:
-                rect.X = Math.Min(StartPoint.X, e.OffsetX);
-                rect.Y = Math.Min(StartPoint.Y, e.OffsetY);
-                rect.Width = Math.Abs(e.OffsetX - StartPoint.X);
-                rect.Height = Math.Abs(e.OffsetY - StartPoint.Y);
+                rect.X = Math.Min(StartPoint.X, px);
+                rect.Y = Math.Min(StartPoint.Y, py);
+                rect.Width = Math.Abs(px - StartPoint.X);
+                rect.Height = Math.Abs(py - StartPoint.Y);
                 break;
             case CircleElement circle:
-                var dx = e.OffsetX - StartPoint.X;
-                var dy = e.OffsetY - StartPoint.Y;
+                var dx = px - StartPoint.X;
+                var dy = py - StartPoint.Y;
                 circle.Radius = Math.Sqrt(dx * dx + dy * dy);
                 break;
             case EllipseElement ellipse:
-                ellipse.Cx = (StartPoint.X + e.OffsetX) / 2;
-                ellipse.Cy = (StartPoint.Y + e.OffsetY) / 2;
-                ellipse.Rx = Math.Abs(e.OffsetX - StartPoint.X) / 2;
-                ellipse.Ry = Math.Abs(e.OffsetY - StartPoint.Y) / 2;
+                ellipse.Cx = (StartPoint.X + px) / 2;
+                ellipse.Cy = (StartPoint.Y + py) / 2;
+                ellipse.Rx = Math.Abs(px - StartPoint.X) / 2;
+                ellipse.Ry = Math.Abs(py - StartPoint.Y) / 2;
                 break;
             case TriangleElement triangle:
                 // Isoceles triangle: base at bottom, apex at top center
-                var midX = (StartPoint.X + e.OffsetX) / 2;
+                var midX = (StartPoint.X + px) / 2;
                 triangle.X1 = midX; // Top apex
-                triangle.Y1 = Math.Min(StartPoint.Y, e.OffsetY);
+                triangle.Y1 = Math.Min(StartPoint.Y, py);
                 triangle.X2 = StartPoint.X; // Bottom left
-                triangle.Y2 = Math.Max(StartPoint.Y, e.OffsetY);
-                triangle.X3 = e.OffsetX; // Bottom right
-                triangle.Y3 = Math.Max(StartPoint.Y, e.OffsetY);
+                triangle.Y2 = Math.Max(StartPoint.Y, py);
+                triangle.X3 = px; // Bottom right
+                triangle.Y3 = Math.Max(StartPoint.Y, py);
                 break;
             case PolygonElement polygon:
-                var pdx = e.OffsetX - StartPoint.X;
-                var pdy = e.OffsetY - StartPoint.Y;
+                var pdx = px - StartPoint.X;
+                var pdy = py - StartPoint.Y;
                 polygon.Radius = Math.Sqrt(pdx * pdx + pdy * pdy);
                 break;
             case StarElement star:
-                var sdx = e.OffsetX - StartPoint.X;
-                var sdy = e.OffsetY - StartPoint.Y;
+                var sdx = px - StartPoint.X;
+                var sdy = py - StartPoint.Y;
                 star.OuterRadius = Math.Sqrt(sdx * sdx + sdy * sdy);
                 star.InnerRadius = star.OuterRadius * 0.4;
                 break;
             case ArrowElement arrow:
-                arrow.X2 = e.OffsetX;
-                arrow.Y2 = e.OffsetY;
+                arrow.X2 = px;
+                arrow.Y2 = py;
                 var length = Math.Sqrt(Math.Pow(arrow.X2 - arrow.X1, 2) + Math.Pow(arrow.Y2 - arrow.Y1, 2));
                 arrow.HeadSize = Math.Max(10, Math.Min(25, length * 0.15));
                 break;
@@ -1597,6 +2611,14 @@
         // Finish moving
         if (IsMoving)
         {
+            // Record the move for all selected elements
+            if (Math.Abs(MoveTotalDeltaX) > 0.1 || Math.Abs(MoveTotalDeltaY) > 0.1)
+            {
+                foreach (var el in SelectedElements)
+                {
+                    RecordAction(ActionType.MoveElement, el, deltaX: MoveTotalDeltaX, deltaY: MoveTotalDeltaY);
+                }
+            }
             IsMoving = false;
             DragStart = null;
             return;
@@ -1610,10 +2632,12 @@
             ResizeHandle = null;
             OriginalBounds = null;
             OriginalElementSnapshot = null;
+            OriginalElementBounds = null;
+            OriginalElementSnapshots = null;
             return;
         }
 
-        // Finish area selection
+        // Finish area selection (skip locked layers)
         if (IsSelecting && SelectionStart != null && SelectionEnd != null)
         {
             var x = Math.Min(SelectionStart.X, SelectionEnd.X);
@@ -1621,15 +2645,50 @@
             var w = Math.Abs(SelectionEnd.X - SelectionStart.X);
             var h = Math.Abs(SelectionEnd.Y - SelectionStart.Y);
 
-            foreach (var el in Elements)
+            int selectedCount = 0;
+            int checkedCount = 0;
+            int layerCount = 0;
+
+            // Log selection rectangle for debugging
+            _ = JS.InvokeVoidAsync("console.log", $"Selection: start=({SelectionStart.X:F2},{SelectionStart.Y:F2}) end=({SelectionEnd.X:F2},{SelectionEnd.Y:F2}) rect=({x:F2},{y:F2}) size={w:F2}x{h:F2}");
+
+            // Check all layers that are visible and unlocked
+            foreach (var layer in Layers)
             {
-                if (el.IntersectsRect(x, y, w, h))
+                // Skip invisible or locked layers
+                if (!layer.IsVisible || layer.IsLocked)
                 {
-                    el.IsSelected = true;
-                    if (!SelectedElements.Contains(el))
-                        SelectedElements.Add(el);
+                    _ = JS.InvokeVoidAsync("console.log", $"  Skipping layer '{layer.Name}' - visible:{layer.IsVisible} locked:{layer.IsLocked}");
+                    continue;
+                }
+
+                layerCount++;
+                _ = JS.InvokeVoidAsync("console.log", $"  Checking layer '{layer.Name}' with {layer.Elements.Count} elements");
+
+                foreach (var el in layer.Elements)
+                {
+                    checkedCount++;
+                    var bounds = el.GetBounds();
+                    var intersects = el.IntersectsRect(x, y, w, h);
+
+                    if (intersects || checkedCount <= 5) // Log first 5 and all intersecting
+                        _ = JS.InvokeVoidAsync("console.log", $"    {el.GetType().Name}: bounds=({bounds.X:F2},{bounds.Y:F2},{bounds.Width:F2},{bounds.Height:F2}) intersects={intersects}");
+
+                    // Check if element intersects with selection rectangle
+                    if (intersects)
+                    {
+                        if (!el.IsSelected)
+                        {
+                            el.IsSelected = true;
+                            SelectedElements.Add(el);
+                            selectedCount++;
+                        }
+                    }
                 }
             }
+
+            InputHint = $"Selected {selectedCount} of {checkedCount} elements in {layerCount} layers (rect: {w:F0}x{h:F0})";
+            _ = JS.InvokeVoidAsync("console.log", $"RESULT: {InputHint}");
             IsSelecting = false;
             SelectionStart = null;
             SelectionEnd = null;
@@ -1639,7 +2698,8 @@
         if (IsDrawing && CurrentElement != null)
         {
             SaveUndoState();
-            Elements.Add(CurrentElement);
+            CurrentLayer.Elements.Add(CurrentElement);
+            RecordAction(ActionType.CreateElement, CurrentElement);
 
             // Chain mode: continue from endpoint
             if (ChainMode)
@@ -1675,7 +2735,8 @@
         {
             switch (e.Key.ToLower())
             {
-                case "v": _ = JS.InvokeVoidAsync("pasteFromClipboard"); break;
+                case "c": CopySelected(); break;
+                case "v": PasteFromClipboard(); break;
                 case "z": OnUndoClick(); StateHasChanged(); break;
                 case "a": SelectAll(); break; // Ctrl+A = select all
             }
@@ -1731,10 +2792,13 @@
     private void SelectAll()
     {
         ClearSelection();
-        foreach (var el in Elements)
+        foreach (var layer in Layers.Where(l => l.IsVisible && !l.IsLocked))
         {
-            el.IsSelected = true;
-            SelectedElements.Add(el);
+            foreach (var el in layer.Elements)
+            {
+                el.IsSelected = true;
+                SelectedElements.Add(el);
+            }
         }
     }
 
@@ -1750,7 +2814,12 @@
         if (SelectedElements.Count == 0) return;
         SaveUndoState();
         foreach (var el in SelectedElements)
-            Elements.Remove(el);
+        {
+            RecordAction(ActionType.DeleteElement, el);
+            // Remove from whichever layer contains it
+            foreach (var layer in Layers)
+                layer.Elements.Remove(el);
+        }
         SelectedElements.Clear();
     }
 
@@ -1805,16 +2874,16 @@
                 Stroke = StrokeColor,
                 StrokeWidth = StrokeWidth > 2 ? 0.5 : 0
             };
-            Elements.Add(textElement);
+            CurrentLayer.Elements.Add(textElement);
         }
         CloseTextInput();
     }
 
-    // Helper to check if point is on a resize handle
+    // Helper to check if point is on a resize handle (works for single or group selection)
     private string? GetResizeHandleAt(double x, double y)
     {
-        if (SelectedElements.Count != 1) return null;
-        var b = SelectedElements[0].GetBounds();
+        if (SelectedElements.Count == 0) return null;
+        var b = GetGroupBounds(); // Use group bounds for both single and multi-selection
         var handleSize = 12; // Slightly larger hit area
         var hs = handleSize / 2.0;
 
@@ -1833,6 +2902,27 @@
 
     private bool IsInRect(double px, double py, double rx, double ry, double rw, double rh) =>
         px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
+
+    // Helper to get combined bounding box of all selected elements
+    private BoundingBox GetGroupBounds()
+    {
+        if (SelectedElements.Count == 0) return new BoundingBox(0, 0, 0, 0);
+        if (SelectedElements.Count == 1) return SelectedElements[0].GetBounds();
+
+        double minX = double.MaxValue, minY = double.MaxValue;
+        double maxX = double.MinValue, maxY = double.MinValue;
+
+        foreach (var el in SelectedElements)
+        {
+            var b = el.GetBounds();
+            minX = Math.Min(minX, b.X);
+            minY = Math.Min(minY, b.Y);
+            maxX = Math.Max(maxX, b.X + b.Width);
+            maxY = Math.Max(maxY, b.Y + b.Height);
+        }
+
+        return new BoundingBox(minX, minY, maxX - minX, maxY - minY);
+    }
 
     // Move element by delta
     private void MoveElement(VectorElement el, double dx, double dy)
@@ -1971,6 +3061,110 @@
         }
     }
 
+    // Resize a group of elements proportionally
+    private void ResizeGroup(double mouseX, double mouseY)
+    {
+        if (DragStart == null || OriginalBounds == null || ResizeHandle == null || OriginalElementBounds == null || OriginalElementSnapshots == null) return;
+
+        var ob = OriginalBounds;
+        var dx = mouseX - DragStart.X;
+        var dy = mouseY - DragStart.Y;
+
+        double newX = ob.X, newY = ob.Y, newW = ob.Width, newH = ob.Height;
+
+        // Calculate new group bounds based on handle
+        switch (ResizeHandle)
+        {
+            case "nw": newX = ob.X + dx; newY = ob.Y + dy; newW = ob.Width - dx; newH = ob.Height - dy; break;
+            case "ne": newY = ob.Y + dy; newW = ob.Width + dx; newH = ob.Height - dy; break;
+            case "sw": newX = ob.X + dx; newW = ob.Width - dx; newH = ob.Height + dy; break;
+            case "se": newW = ob.Width + dx; newH = ob.Height + dy; break;
+            case "n": newY = ob.Y + dy; newH = ob.Height - dy; break;
+            case "s": newH = ob.Height + dy; break;
+            case "w": newX = ob.X + dx; newW = ob.Width - dx; break;
+            case "e": newW = ob.Width + dx; break;
+        }
+
+        // Ensure minimum size
+        if (newW < 20) { newW = 20; if (ResizeHandle.Contains('w')) newX = ob.X + ob.Width - 20; }
+        if (newH < 20) { newH = 20; if (ResizeHandle.Contains('n')) newY = ob.Y + ob.Height - 20; }
+
+        // Calculate scale factors
+        var scaleX = ob.Width > 0 ? newW / ob.Width : 1;
+        var scaleY = ob.Height > 0 ? newH / ob.Height : 1;
+
+        // Apply scaling to each element relative to original group bounds
+        foreach (var el in SelectedElements)
+        {
+            if (!OriginalElementBounds.TryGetValue(el.Id, out var elOb)) continue;
+            if (!OriginalElementSnapshots.TryGetValue(el.Id, out var origEl)) continue;
+
+            // Calculate new element bounds
+            var elNewX = newX + (elOb.X - ob.X) * scaleX;
+            var elNewY = newY + (elOb.Y - ob.Y) * scaleY;
+            var elNewW = elOb.Width * scaleX;
+            var elNewH = elOb.Height * scaleY;
+
+            // Apply to element based on type, using ORIGINAL snapshot for point-based elements
+            switch (el)
+            {
+                case RectElement rect:
+                    rect.X = elNewX; rect.Y = elNewY; rect.Width = Math.Max(1, elNewW); rect.Height = Math.Max(1, elNewH);
+                    break;
+                case CircleElement circle:
+                    circle.Cx = elNewX + elNewW / 2; circle.Cy = elNewY + elNewH / 2;
+                    circle.Radius = Math.Max(1, Math.Min(elNewW, elNewH) / 2);
+                    break;
+                case EllipseElement ellipse:
+                    ellipse.Cx = elNewX + elNewW / 2; ellipse.Cy = elNewY + elNewH / 2;
+                    ellipse.Rx = Math.Max(1, elNewW / 2); ellipse.Ry = Math.Max(1, elNewH / 2);
+                    break;
+                case PolygonElement poly:
+                    poly.Cx = elNewX + elNewW / 2; poly.Cy = elNewY + elNewH / 2;
+                    poly.Radius = Math.Max(1, Math.Min(elNewW, elNewH) / 2);
+                    break;
+                case StarElement star:
+                    star.Cx = elNewX + elNewW / 2; star.Cy = elNewY + elNewH / 2;
+                    star.OuterRadius = Math.Max(1, Math.Min(elNewW, elNewH) / 2);
+                    star.InnerRadius = star.OuterRadius * 0.4;
+                    break;
+                case ImageElement img:
+                    img.X = elNewX; img.Y = elNewY; img.Width = Math.Max(1, elNewW); img.Height = Math.Max(1, elNewH);
+                    break;
+                case LineElement line when origEl is LineElement origLine:
+                    line.X1 = newX + (origLine.X1 - ob.X) * scaleX;
+                    line.Y1 = newY + (origLine.Y1 - ob.Y) * scaleY;
+                    line.X2 = newX + (origLine.X2 - ob.X) * scaleX;
+                    line.Y2 = newY + (origLine.Y2 - ob.Y) * scaleY;
+                    break;
+                case ArrowElement arrow when origEl is ArrowElement origArrow:
+                    arrow.X1 = newX + (origArrow.X1 - ob.X) * scaleX;
+                    arrow.Y1 = newY + (origArrow.Y1 - ob.Y) * scaleY;
+                    arrow.X2 = newX + (origArrow.X2 - ob.X) * scaleX;
+                    arrow.Y2 = newY + (origArrow.Y2 - ob.Y) * scaleY;
+                    break;
+                case TriangleElement tri when origEl is TriangleElement origTri:
+                    tri.X1 = newX + (origTri.X1 - ob.X) * scaleX;
+                    tri.Y1 = newY + (origTri.Y1 - ob.Y) * scaleY;
+                    tri.X2 = newX + (origTri.X2 - ob.X) * scaleX;
+                    tri.Y2 = newY + (origTri.Y2 - ob.Y) * scaleY;
+                    tri.X3 = newX + (origTri.X3 - ob.X) * scaleX;
+                    tri.Y3 = newY + (origTri.Y3 - ob.Y) * scaleY;
+                    break;
+                case PathElement path when origEl is PathElement origPath:
+                    path.Points = origPath.Points.Select(p => new Point(
+                        newX + (p.X - ob.X) * scaleX,
+                        newY + (p.Y - ob.Y) * scaleY
+                    )).ToList();
+                    break;
+                case TextElement txt:
+                    txt.X = elNewX; txt.Y = elNewY + elNewH;
+                    txt.FontSize = Math.Max(8, elNewH * 0.8);
+                    break;
+            }
+        }
+    }
+
     // Property panel helpers
     private string GetSelectedStroke() => SelectedElements.FirstOrDefault()?.Stroke ?? "#000000";
     private string GetSelectedFill()
@@ -2021,8 +3215,15 @@
         SaveUndoState();
         foreach (var el in SelectedElements)
         {
-            Elements.Remove(el);
-            Elements.Add(el);
+            // Find which layer contains this element and move within that layer
+            foreach (var layer in Layers)
+            {
+                if (layer.Elements.Remove(el))
+                {
+                    layer.Elements.Add(el);
+                    break;
+                }
+            }
         }
     }
 
@@ -2031,25 +3232,38 @@
         SaveUndoState();
         var toMove = SelectedElements.ToList();
         foreach (var el in toMove)
-            Elements.Remove(el);
-        Elements.InsertRange(0, toMove);
+        {
+            foreach (var layer in Layers)
+            {
+                var idx = layer.Elements.IndexOf(el);
+                if (idx >= 0)
+                {
+                    layer.Elements.RemoveAt(idx);
+                    layer.Elements.Insert(0, el);
+                    break;
+                }
+            }
+        }
     }
 
     private void BringForward()
     {
         SaveUndoState();
-        // Process in reverse order of index to avoid shifting issues
-        var sortedByIndex = SelectedElements
-            .Select(el => (el, index: Elements.IndexOf(el)))
-            .OrderByDescending(x => x.index)
-            .ToList();
-
-        foreach (var (el, index) in sortedByIndex)
+        foreach (var layer in Layers)
         {
-            if (index < Elements.Count - 1)
+            var layerSelected = SelectedElements.Where(e => layer.Elements.Contains(e)).ToList();
+            var sortedByIndex = layerSelected
+                .Select(el => (el, index: layer.Elements.IndexOf(el)))
+                .OrderByDescending(x => x.index)
+                .ToList();
+
+            foreach (var (el, index) in sortedByIndex)
             {
-                Elements.RemoveAt(index);
-                Elements.Insert(index + 1, el);
+                if (index < layer.Elements.Count - 1)
+                {
+                    layer.Elements.RemoveAt(index);
+                    layer.Elements.Insert(index + 1, el);
+                }
             }
         }
     }
@@ -2057,18 +3271,21 @@
     private void SendBackward()
     {
         SaveUndoState();
-        // Process in order of index to avoid shifting issues
-        var sortedByIndex = SelectedElements
-            .Select(el => (el, index: Elements.IndexOf(el)))
-            .OrderBy(x => x.index)
-            .ToList();
-
-        foreach (var (el, index) in sortedByIndex)
+        foreach (var layer in Layers)
         {
-            if (index > 0)
+            var layerSelected = SelectedElements.Where(e => layer.Elements.Contains(e)).ToList();
+            var sortedByIndex = layerSelected
+                .Select(el => (el, index: layer.Elements.IndexOf(el)))
+                .OrderBy(x => x.index)
+                .ToList();
+
+            foreach (var (el, index) in sortedByIndex)
             {
-                Elements.RemoveAt(index);
-                Elements.Insert(index - 1, el);
+                if (index > 0)
+                {
+                    layer.Elements.RemoveAt(index);
+                    layer.Elements.Insert(index - 1, el);
+                }
             }
         }
     }
@@ -2077,21 +3294,644 @@
     {
         SaveUndoState();
         var newElements = new List<VectorElement>();
+        // Map old group IDs to new group IDs for duplicated elements
+        var groupIdMap = new Dictionary<string, string>();
+
         foreach (var el in SelectedElements)
         {
             var clone = CloneElement(el);
             if (clone != null)
             {
                 MoveElement(clone, 20, 20); // Offset the duplicate
+                // Preserve grouping with new group IDs
+                if (!string.IsNullOrEmpty(el.GroupId))
+                {
+                    if (!groupIdMap.ContainsKey(el.GroupId))
+                        groupIdMap[el.GroupId] = Guid.NewGuid().ToString();
+                    clone.GroupId = groupIdMap[el.GroupId];
+                }
                 newElements.Add(clone);
             }
         }
         ClearSelection();
         foreach (var el in newElements)
         {
-            Elements.Add(el);
+            CurrentLayer.Elements.Add(el);
             el.IsSelected = true;
             SelectedElements.Add(el);
+        }
+    }
+
+    private void GroupSelected()
+    {
+        if (SelectedElements.Count < 2) return;
+        SaveUndoState();
+
+        var groupId = Guid.NewGuid().ToString();
+        var elementIds = SelectedElements.Select(e => e.Id).ToList();
+        foreach (var el in SelectedElements)
+        {
+            el.GroupId = groupId;
+        }
+        RecordAction(ActionType.GroupElements, elementIds: elementIds, groupId: groupId);
+        InputHint = $"Grouped {SelectedElements.Count} elements";
+        StateHasChanged();
+    }
+
+    private void UngroupSelected()
+    {
+        if (SelectedElements.Count == 0) return;
+        SaveUndoState();
+
+        var ungroupedCount = 0;
+        var elementIds = new List<string>();
+        foreach (var el in SelectedElements)
+        {
+            if (el.GroupId != null)
+            {
+                elementIds.Add(el.Id);
+                el.GroupId = null;
+                ungroupedCount++;
+            }
+        }
+        if (elementIds.Count > 0)
+            RecordAction(ActionType.UngroupElements, elementIds: elementIds);
+        InputHint = $"Ungrouped {ungroupedCount} elements";
+        StateHasChanged();
+    }
+
+    private bool HasGroupedSelection()
+    {
+        return SelectedElements.Any(el => el.GroupId != null);
+    }
+
+    private void SelectGroupMembers(VectorElement element)
+    {
+        if (string.IsNullOrEmpty(element.GroupId)) return;
+
+        // Find all elements in the same group across all layers
+        foreach (var layer in Layers)
+        {
+            foreach (var el in layer.Elements)
+            {
+                if (el.GroupId == element.GroupId && !el.IsSelected)
+                {
+                    el.IsSelected = true;
+                    SelectedElements.Add(el);
+                }
+            }
+        }
+    }
+
+    // =====================================================
+    // Recording Methods
+    // =====================================================
+
+    private void StartRecording()
+    {
+        if (IsRecording) return;
+
+        CurrentRecording = new Recording
+        {
+            Name = RecordingName,
+            CanvasWidth = CanvasWidth,
+            CanvasHeight = CanvasHeight,
+            CanvasFill = _canvasFill
+        };
+        RecordingStopwatch = System.Diagnostics.Stopwatch.StartNew();
+        IsRecording = true;
+        InputHint = "Recording started...";
+        StateHasChanged();
+    }
+
+    private void StopRecording()
+    {
+        if (!IsRecording || CurrentRecording == null) return;
+
+        RecordingStopwatch?.Stop();
+        IsRecording = false;
+        InputHint = $"Recording stopped. {CurrentRecording.Actions.Count} actions recorded.";
+        StateHasChanged();
+    }
+
+    private void SaveRecording()
+    {
+        if (CurrentRecording == null || CurrentRecording.Actions.Count == 0)
+        {
+            InputHint = "No recording to save";
+            return;
+        }
+
+        CurrentRecording.Name = RecordingName;
+        SavedRecordings.Add(CurrentRecording);
+        _ = JS.InvokeVoidAsync("localStorage.setItem", $"vecsketch-recording-{CurrentRecording.Id}",
+            System.Text.Json.JsonSerializer.Serialize(CurrentRecording));
+
+        // Save the list of recording IDs
+        var recordingIds = SavedRecordings.Select(r => r.Id).ToList();
+        _ = JS.InvokeVoidAsync("localStorage.setItem", "vecsketch-recordings",
+            System.Text.Json.JsonSerializer.Serialize(recordingIds));
+
+        InputHint = $"Recording '{CurrentRecording.Name}' saved!";
+        CurrentRecording = null; // Clear after saving so UI returns to initial state
+        StateHasChanged();
+    }
+
+    private async Task LoadSavedRecordings()
+    {
+        try
+        {
+            var idsJson = await JS.InvokeAsync<string?>("localStorage.getItem", "vecsketch-recordings");
+            if (string.IsNullOrEmpty(idsJson)) return;
+
+            var ids = System.Text.Json.JsonSerializer.Deserialize<List<string>>(idsJson);
+            if (ids == null) return;
+
+            SavedRecordings.Clear();
+            foreach (var id in ids)
+            {
+                var recJson = await JS.InvokeAsync<string?>("localStorage.getItem", $"vecsketch-recording-{id}");
+                if (!string.IsNullOrEmpty(recJson))
+                {
+                    var rec = System.Text.Json.JsonSerializer.Deserialize<Recording>(recJson);
+                    if (rec != null)
+                        SavedRecordings.Add(rec);
+                }
+            }
+        }
+        catch { }
+    }
+
+    private void RecordAction(ActionType type, VectorElement? element = null,
+        double? deltaX = null, double? deltaY = null,
+        int? layerIndex = null, string? layerName = null,
+        List<string>? elementIds = null, string? groupId = null)
+    {
+        if (!IsRecording || CurrentRecording == null || RecordingStopwatch == null) return;
+
+        var action = new RecordedAction
+        {
+            Type = type,
+            TimestampMs = RecordingStopwatch.ElapsedMilliseconds,
+            ElementId = element?.Id,
+            ElementType = element?.GetType().Name,
+            DeltaX = deltaX,
+            DeltaY = deltaY,
+            LayerIndex = layerIndex,
+            LayerName = layerName,
+            ElementIds = elementIds,
+            GroupId = groupId
+        };
+
+        // Serialize element if creating/modifying
+        if (element != null && (type == ActionType.CreateElement || type == ActionType.ModifyElement))
+        {
+            action.ElementJson = SerializeElement(element);
+        }
+
+        CurrentRecording.Actions.Add(action);
+    }
+
+    private string SerializeElement(VectorElement el)
+    {
+        var options = new System.Text.Json.JsonSerializerOptions { WriteIndented = false };
+        return el switch
+        {
+            LineElement line => System.Text.Json.JsonSerializer.Serialize(new { Type = "Line", line.Id, line.X1, line.Y1, line.X2, line.Y2, line.Stroke, line.StrokeWidth, line.Fill, line.GroupId }, options),
+            PathElement path => System.Text.Json.JsonSerializer.Serialize(new { Type = "Path", path.Id, path.Points, path.Stroke, path.StrokeWidth, path.Fill, path.GroupId }, options),
+            RectElement rect => System.Text.Json.JsonSerializer.Serialize(new { Type = "Rect", rect.Id, rect.X, rect.Y, rect.Width, rect.Height, rect.Stroke, rect.StrokeWidth, rect.Fill, rect.GroupId }, options),
+            CircleElement circle => System.Text.Json.JsonSerializer.Serialize(new { Type = "Circle", circle.Id, circle.Cx, circle.Cy, circle.Radius, circle.Stroke, circle.StrokeWidth, circle.Fill, circle.GroupId }, options),
+            EllipseElement ellipse => System.Text.Json.JsonSerializer.Serialize(new { Type = "Ellipse", ellipse.Id, ellipse.Cx, ellipse.Cy, ellipse.Rx, ellipse.Ry, ellipse.Stroke, ellipse.StrokeWidth, ellipse.Fill, ellipse.GroupId }, options),
+            TextElement txt => System.Text.Json.JsonSerializer.Serialize(new { Type = "Text", txt.Id, txt.X, txt.Y, txt.Text, txt.FontSize, txt.FontFamily, txt.Stroke, txt.StrokeWidth, txt.Fill, txt.GroupId }, options),
+            TriangleElement tri => System.Text.Json.JsonSerializer.Serialize(new { Type = "Triangle", tri.Id, tri.X1, tri.Y1, tri.X2, tri.Y2, tri.X3, tri.Y3, tri.Stroke, tri.StrokeWidth, tri.Fill, tri.GroupId }, options),
+            PolygonElement poly => System.Text.Json.JsonSerializer.Serialize(new { Type = "Polygon", poly.Id, poly.Cx, poly.Cy, poly.Radius, poly.Sides, poly.Stroke, poly.StrokeWidth, poly.Fill, poly.GroupId }, options),
+            StarElement star => System.Text.Json.JsonSerializer.Serialize(new { Type = "Star", star.Id, star.Cx, star.Cy, star.OuterRadius, star.InnerRadius, star.Points, star.Stroke, star.StrokeWidth, star.Fill, star.GroupId }, options),
+            ArrowElement arrow => System.Text.Json.JsonSerializer.Serialize(new { Type = "Arrow", arrow.Id, arrow.X1, arrow.Y1, arrow.X2, arrow.Y2, arrow.HeadSize, arrow.Stroke, arrow.StrokeWidth, arrow.Fill, arrow.GroupId }, options),
+            SvgPathElement svgPath => System.Text.Json.JsonSerializer.Serialize(new { Type = "SvgPath", svgPath.Id, svgPath.D, svgPath.Stroke, svgPath.StrokeWidth, svgPath.Fill, svgPath.GroupId }, options),
+            _ => "{}"
+        };
+    }
+
+    private async Task StartReplay(Recording recording)
+    {
+        if (IsReplaying) return;
+
+        // Clear canvas and set up for replay
+        SaveUndoState();
+        foreach (var layer in Layers) layer.Elements.Clear();
+        ClearSelection();
+        CanvasWidth = recording.CanvasWidth;
+        CanvasHeight = recording.CanvasHeight;
+        _canvasFill = recording.CanvasFill ?? "white";
+
+        IsReplaying = true;
+        ReplayIndex = 0;
+        ReplayCts = new System.Threading.CancellationTokenSource();
+        InputHint = $"Replaying '{recording.Name}'...";
+        StateHasChanged();
+
+        try
+        {
+            long lastTimestamp = 0;
+            foreach (var action in recording.Actions)
+            {
+                if (ReplayCts.Token.IsCancellationRequested) break;
+
+                // Wait for the time delta
+                var delay = (int)(action.TimestampMs - lastTimestamp);
+                if (delay > 0)
+                    await Task.Delay(Math.Min(delay, 2000), ReplayCts.Token); // Cap delay at 2s
+
+                await ReplayAction(action);
+                lastTimestamp = action.TimestampMs;
+                ReplayIndex++;
+                StateHasChanged();
+            }
+        }
+        catch (TaskCanceledException) { }
+
+        IsReplaying = false;
+        ReplayCts = null;
+        InputHint = "Replay complete!";
+        StateHasChanged();
+    }
+
+    private void StopReplay()
+    {
+        ReplayCts?.Cancel();
+    }
+
+    private async Task ReplayAction(RecordedAction action)
+    {
+        switch (action.Type)
+        {
+            case ActionType.CreateElement:
+                if (!string.IsNullOrEmpty(action.ElementJson))
+                {
+                    var element = DeserializeElement(action.ElementJson);
+                    if (element != null)
+                        CurrentLayer.Elements.Add(element);
+                }
+                break;
+
+            case ActionType.MoveElement:
+                if (action.ElementId != null && action.DeltaX.HasValue && action.DeltaY.HasValue)
+                {
+                    var el = FindElementById(action.ElementId);
+                    if (el != null)
+                        MoveElement(el, action.DeltaX.Value, action.DeltaY.Value);
+                }
+                break;
+
+            case ActionType.DeleteElement:
+                if (action.ElementId != null)
+                {
+                    var el = FindElementById(action.ElementId);
+                    if (el != null)
+                    {
+                        foreach (var layer in Layers)
+                            layer.Elements.Remove(el);
+                    }
+                }
+                break;
+
+            case ActionType.AddLayer:
+                Layers.Add(new Layer { Name = action.LayerName ?? $"Layer {Layers.Count + 1}" });
+                break;
+
+            case ActionType.SelectLayer:
+                if (action.LayerIndex.HasValue && action.LayerIndex.Value < Layers.Count)
+                    CurrentLayerIndex = action.LayerIndex.Value;
+                break;
+
+            case ActionType.GroupElements:
+                if (action.ElementIds != null && action.GroupId != null)
+                {
+                    foreach (var id in action.ElementIds)
+                    {
+                        var el = FindElementById(id);
+                        if (el != null) el.GroupId = action.GroupId;
+                    }
+                }
+                break;
+
+            case ActionType.UngroupElements:
+                if (action.ElementIds != null)
+                {
+                    foreach (var id in action.ElementIds)
+                    {
+                        var el = FindElementById(id);
+                        if (el != null) el.GroupId = null;
+                    }
+                }
+                break;
+
+            case ActionType.Clear:
+                foreach (var layer in Layers) layer.Elements.Clear();
+                break;
+        }
+
+        await Task.CompletedTask;
+    }
+
+    private VectorElement? FindElementById(string id)
+    {
+        foreach (var layer in Layers)
+        {
+            var el = layer.Elements.FirstOrDefault(e => e.Id == id);
+            if (el != null) return el;
+        }
+        return null;
+    }
+
+    private VectorElement? DeserializeElement(string json)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            var type = root.GetProperty("Type").GetString();
+
+            return type switch
+            {
+                "Line" => new LineElement
+                {
+                    Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
+                    X1 = root.GetProperty("X1").GetDouble(),
+                    Y1 = root.GetProperty("Y1").GetDouble(),
+                    X2 = root.GetProperty("X2").GetDouble(),
+                    Y2 = root.GetProperty("Y2").GetDouble(),
+                    Stroke = root.GetProperty("Stroke").GetString() ?? "#000000",
+                    StrokeWidth = root.GetProperty("StrokeWidth").GetDouble(),
+                    Fill = root.GetProperty("Fill").GetString() ?? "none",
+                    GroupId = root.TryGetProperty("GroupId", out var gid) ? gid.GetString() : null
+                },
+                "Path" => DeserializePathElement(root),
+                "Rect" => new RectElement
+                {
+                    Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
+                    X = root.GetProperty("X").GetDouble(),
+                    Y = root.GetProperty("Y").GetDouble(),
+                    Width = root.GetProperty("Width").GetDouble(),
+                    Height = root.GetProperty("Height").GetDouble(),
+                    Stroke = root.GetProperty("Stroke").GetString() ?? "#000000",
+                    StrokeWidth = root.GetProperty("StrokeWidth").GetDouble(),
+                    Fill = root.GetProperty("Fill").GetString() ?? "none",
+                    GroupId = root.TryGetProperty("GroupId", out var gid2) ? gid2.GetString() : null
+                },
+                "Circle" => new CircleElement
+                {
+                    Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
+                    Cx = root.GetProperty("Cx").GetDouble(),
+                    Cy = root.GetProperty("Cy").GetDouble(),
+                    Radius = root.GetProperty("Radius").GetDouble(),
+                    Stroke = root.GetProperty("Stroke").GetString() ?? "#000000",
+                    StrokeWidth = root.GetProperty("StrokeWidth").GetDouble(),
+                    Fill = root.GetProperty("Fill").GetString() ?? "none",
+                    GroupId = root.TryGetProperty("GroupId", out var gid3) ? gid3.GetString() : null
+                },
+                "Ellipse" => new EllipseElement
+                {
+                    Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
+                    Cx = root.GetProperty("Cx").GetDouble(),
+                    Cy = root.GetProperty("Cy").GetDouble(),
+                    Rx = root.GetProperty("Rx").GetDouble(),
+                    Ry = root.GetProperty("Ry").GetDouble(),
+                    Stroke = root.GetProperty("Stroke").GetString() ?? "#000000",
+                    StrokeWidth = root.GetProperty("StrokeWidth").GetDouble(),
+                    Fill = root.GetProperty("Fill").GetString() ?? "none",
+                    GroupId = root.TryGetProperty("GroupId", out var gid4) ? gid4.GetString() : null
+                },
+                "Text" => new TextElement
+                {
+                    Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
+                    X = root.GetProperty("X").GetDouble(),
+                    Y = root.GetProperty("Y").GetDouble(),
+                    Text = root.GetProperty("Text").GetString() ?? "",
+                    FontSize = root.GetProperty("FontSize").GetDouble(),
+                    FontFamily = root.GetProperty("FontFamily").GetString() ?? "Arial",
+                    Stroke = root.GetProperty("Stroke").GetString() ?? "#000000",
+                    StrokeWidth = root.GetProperty("StrokeWidth").GetDouble(),
+                    Fill = root.GetProperty("Fill").GetString() ?? "#000000",
+                    GroupId = root.TryGetProperty("GroupId", out var gid5) ? gid5.GetString() : null
+                },
+                "Triangle" => new TriangleElement
+                {
+                    Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
+                    X1 = root.GetProperty("X1").GetDouble(),
+                    Y1 = root.GetProperty("Y1").GetDouble(),
+                    X2 = root.GetProperty("X2").GetDouble(),
+                    Y2 = root.GetProperty("Y2").GetDouble(),
+                    X3 = root.GetProperty("X3").GetDouble(),
+                    Y3 = root.GetProperty("Y3").GetDouble(),
+                    Stroke = root.GetProperty("Stroke").GetString() ?? "#000000",
+                    StrokeWidth = root.GetProperty("StrokeWidth").GetDouble(),
+                    Fill = root.GetProperty("Fill").GetString() ?? "none",
+                    GroupId = root.TryGetProperty("GroupId", out var gid6) ? gid6.GetString() : null
+                },
+                "Polygon" => new PolygonElement
+                {
+                    Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
+                    Cx = root.GetProperty("Cx").GetDouble(),
+                    Cy = root.GetProperty("Cy").GetDouble(),
+                    Radius = root.GetProperty("Radius").GetDouble(),
+                    Sides = root.GetProperty("Sides").GetInt32(),
+                    Stroke = root.GetProperty("Stroke").GetString() ?? "#000000",
+                    StrokeWidth = root.GetProperty("StrokeWidth").GetDouble(),
+                    Fill = root.GetProperty("Fill").GetString() ?? "none",
+                    GroupId = root.TryGetProperty("GroupId", out var gid7) ? gid7.GetString() : null
+                },
+                "Star" => new StarElement
+                {
+                    Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
+                    Cx = root.GetProperty("Cx").GetDouble(),
+                    Cy = root.GetProperty("Cy").GetDouble(),
+                    OuterRadius = root.GetProperty("OuterRadius").GetDouble(),
+                    InnerRadius = root.GetProperty("InnerRadius").GetDouble(),
+                    Points = root.GetProperty("Points").GetInt32(),
+                    Stroke = root.GetProperty("Stroke").GetString() ?? "#000000",
+                    StrokeWidth = root.GetProperty("StrokeWidth").GetDouble(),
+                    Fill = root.GetProperty("Fill").GetString() ?? "none",
+                    GroupId = root.TryGetProperty("GroupId", out var gid8) ? gid8.GetString() : null
+                },
+                "Arrow" => new ArrowElement
+                {
+                    Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
+                    X1 = root.GetProperty("X1").GetDouble(),
+                    Y1 = root.GetProperty("Y1").GetDouble(),
+                    X2 = root.GetProperty("X2").GetDouble(),
+                    Y2 = root.GetProperty("Y2").GetDouble(),
+                    HeadSize = root.TryGetProperty("HeadSize", out var hs) ? hs.GetDouble() : 15,
+                    Stroke = root.GetProperty("Stroke").GetString() ?? "#000000",
+                    StrokeWidth = root.GetProperty("StrokeWidth").GetDouble(),
+                    Fill = root.GetProperty("Fill").GetString() ?? "none",
+                    GroupId = root.TryGetProperty("GroupId", out var gid9) ? gid9.GetString() : null
+                },
+                "SvgPath" => new SvgPathElement
+                {
+                    Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
+                    D = root.GetProperty("D").GetString() ?? "",
+                    Stroke = root.GetProperty("Stroke").GetString() ?? "#000000",
+                    StrokeWidth = root.GetProperty("StrokeWidth").GetDouble(),
+                    Fill = root.GetProperty("Fill").GetString() ?? "none",
+                    GroupId = root.TryGetProperty("GroupId", out var gid10) ? gid10.GetString() : null
+                },
+                _ => null
+            };
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private PathElement DeserializePathElement(System.Text.Json.JsonElement root)
+    {
+        var pathElement = new PathElement
+        {
+            Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
+            Stroke = root.GetProperty("Stroke").GetString() ?? "#000000",
+            StrokeWidth = root.GetProperty("StrokeWidth").GetDouble(),
+            Fill = root.GetProperty("Fill").GetString() ?? "none",
+            GroupId = root.TryGetProperty("GroupId", out var gid) ? gid.GetString() : null
+        };
+
+        // Deserialize Points array
+        if (root.TryGetProperty("Points", out var pointsArray))
+        {
+            foreach (var pointEl in pointsArray.EnumerateArray())
+            {
+                var x = pointEl.GetProperty("X").GetDouble();
+                var y = pointEl.GetProperty("Y").GetDouble();
+                pathElement.Points.Add(new Point(x, y));
+            }
+        }
+
+        return pathElement;
+    }
+
+    private void DiscardRecording()
+    {
+        CurrentRecording = null;
+        RecordingStopwatch = null;
+        InputHint = "Recording discarded";
+        StateHasChanged();
+    }
+
+    private void DeleteRecording(Recording recording)
+    {
+        SavedRecordings.Remove(recording);
+        _ = JS.InvokeVoidAsync("localStorage.removeItem", $"vecsketch-recording-{recording.Id}");
+        var recordingIds = SavedRecordings.Select(r => r.Id).ToList();
+        _ = JS.InvokeVoidAsync("localStorage.setItem", "vecsketch-recordings",
+            System.Text.Json.JsonSerializer.Serialize(recordingIds));
+        StateHasChanged();
+    }
+
+    private async Task ReplaySelected()
+    {
+        if (string.IsNullOrEmpty(SelectedReplayId)) return;
+        var recording = SavedRecordings.FirstOrDefault(r => r.Id == SelectedReplayId);
+        if (recording != null)
+        {
+            await StartReplay(recording);
+        }
+    }
+
+    private async Task ExportRecordingJson(Recording recording)
+    {
+        var json = System.Text.Json.JsonSerializer.Serialize(recording, new System.Text.Json.JsonSerializerOptions
+        {
+            WriteIndented = true
+        });
+        var fileName = $"{recording.Name.Replace(" ", "_")}_{DateTime.Now:yyyyMMdd_HHmmss}.json";
+        await JS.InvokeVoidAsync("downloadTextFile", fileName, json, "application/json");
+        InputHint = $"Exported '{recording.Name}' as {fileName}";
+    }
+
+    private async Task ImportRecordingJson(InputFileChangeEventArgs e)
+    {
+        try
+        {
+            var file = e.File;
+            if (file == null) return;
+
+            using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024); // 10MB max
+            using var reader = new System.IO.StreamReader(stream);
+            var json = await reader.ReadToEndAsync();
+
+            var recording = System.Text.Json.JsonSerializer.Deserialize<Recording>(json);
+            if (recording == null)
+            {
+                InputHint = "Failed to parse recording JSON";
+                return;
+            }
+
+            // Generate new ID to avoid conflicts
+            recording.Id = Guid.NewGuid().ToString();
+
+            // Add to saved recordings
+            SavedRecordings.Add(recording);
+            _ = JS.InvokeVoidAsync("localStorage.setItem", $"vecsketch-recording-{recording.Id}",
+                System.Text.Json.JsonSerializer.Serialize(recording));
+
+            var recordingIds = SavedRecordings.Select(r => r.Id).ToList();
+            _ = JS.InvokeVoidAsync("localStorage.setItem", "vecsketch-recordings",
+                System.Text.Json.JsonSerializer.Serialize(recordingIds));
+
+            InputHint = $"Imported recording '{recording.Name}' ({recording.Actions.Count} actions)";
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            InputHint = $"Import failed: {ex.Message}";
+        }
+    }
+
+    private void CopySelected()
+    {
+        if (SelectedElements.Count == 0) return;
+
+        Clipboard.Clear();
+        foreach (var el in SelectedElements)
+        {
+            var clone = CloneElement(el);
+            if (clone != null)
+                Clipboard.Add(clone);
+        }
+        PasteCount = 0; // Reset paste offset counter
+        InputHint = $"Copied {Clipboard.Count} element(s) to clipboard";
+        StateHasChanged();
+    }
+
+    private void PasteFromClipboard()
+    {
+        // If we have internal clipboard items, paste those
+        if (Clipboard.Count > 0)
+        {
+            SaveUndoState();
+            PasteCount++;
+            var offset = PasteCount * 20; // Cascade offset for multiple pastes
+
+            ClearSelection();
+            foreach (var el in Clipboard)
+            {
+                var clone = CloneElement(el);
+                if (clone != null)
+                {
+                    MoveElement(clone, offset, offset);
+                    CurrentLayer.Elements.Add(clone);
+                    clone.IsSelected = true;
+                    SelectedElements.Add(clone);
+                }
+            }
+            InputHint = $"Pasted {Clipboard.Count} element(s)";
+            StateHasChanged();
+        }
+        else
+        {
+            // Fall back to system clipboard for images/text
+            _ = JS.InvokeVoidAsync("pasteFromClipboard");
         }
     }
 
@@ -2113,6 +3953,134 @@
             SvgPathElement svgPath => new SvgPathElement { D = svgPath.D, Stroke = svgPath.Stroke, StrokeWidth = svgPath.StrokeWidth, Fill = svgPath.Fill },
             _ => null
         };
+    }
+
+    // =====================================================
+    // Layer Management Methods
+    // =====================================================
+    private async Task ToggleLayersPanel()
+    {
+        ShowLayersPanel = !ShowLayersPanel;
+        if (ShowLayersPanel)
+        {
+            // Wait for render, then make panel draggable
+            await Task.Delay(50);
+            await JS.InvokeVoidAsync("makeDraggable", ".layers-panel", ".layers-header");
+        }
+    }
+
+    private async Task ToggleRecordingPanel()
+    {
+        ShowRecordingPanel = !ShowRecordingPanel;
+        if (ShowRecordingPanel)
+        {
+            await LoadSavedRecordings();
+            await Task.Delay(50);
+            await JS.InvokeVoidAsync("makeDraggable", ".recording-panel", ".recording-header");
+        }
+    }
+
+    private void AddLayer()
+    {
+        SaveUndoState();
+        var newLayer = new Layer { Name = $"Layer {Layers.Count + 1}" };
+        Layers.Add(newLayer);
+        CurrentLayerIndex = Layers.Count - 1;
+    }
+
+    private void ShowDeleteLayerConfirm()
+    {
+        if (Layers.Count <= 1) return;
+        ShowDeleteLayerDialog = true;
+    }
+
+    private void DeleteLayerTransferDown()
+    {
+        if (Layers.Count <= 1 || CurrentLayerIndex <= 0) return;
+        SaveUndoState();
+
+        // Transfer elements to the layer below
+        var targetLayer = Layers[CurrentLayerIndex - 1];
+        var sourceElements = Layers[CurrentLayerIndex].Elements;
+
+        // Clear selection for transferred elements
+        foreach (var el in sourceElements)
+        {
+            if (el.IsSelected)
+            {
+                el.IsSelected = false;
+                SelectedElements.Remove(el);
+            }
+        }
+
+        // Add all elements to target layer
+        targetLayer.Elements.AddRange(sourceElements);
+
+        // Remove the current layer
+        Layers.RemoveAt(CurrentLayerIndex);
+        CurrentLayerIndex = Math.Min(CurrentLayerIndex, Layers.Count - 1);
+
+        ShowDeleteLayerDialog = false;
+    }
+
+    private void DeleteLayerAndContents()
+    {
+        if (Layers.Count <= 1) return;
+        SaveUndoState();
+
+        // Clear selection if any selected elements are in this layer
+        var layerElements = Layers[CurrentLayerIndex].Elements;
+        foreach (var el in layerElements)
+        {
+            if (el.IsSelected)
+            {
+                el.IsSelected = false;
+                SelectedElements.Remove(el);
+            }
+        }
+
+        Layers.RemoveAt(CurrentLayerIndex);
+        if (CurrentLayerIndex >= Layers.Count)
+            CurrentLayerIndex = Layers.Count - 1;
+
+        ShowDeleteLayerDialog = false;
+    }
+
+    private void SelectLayer(int index)
+    {
+        if (index >= 0 && index < Layers.Count)
+            CurrentLayerIndex = index;
+    }
+
+    private void ToggleLayerVisibility(int index)
+    {
+        if (index >= 0 && index < Layers.Count)
+        {
+            SaveUndoState();
+            Layers[index].IsVisible = !Layers[index].IsVisible;
+
+            // Deselect elements in hidden layers
+            if (!Layers[index].IsVisible)
+            {
+                foreach (var el in Layers[index].Elements)
+                {
+                    if (el.IsSelected)
+                    {
+                        el.IsSelected = false;
+                        SelectedElements.Remove(el);
+                    }
+                }
+            }
+        }
+    }
+
+    private void ToggleLayerLock(int index)
+    {
+        if (index >= 0 && index < Layers.Count)
+        {
+            SaveUndoState();
+            Layers[index].IsLocked = !Layers[index].IsLocked;
+        }
     }
 
     // =====================================================
@@ -2218,6 +4186,80 @@
         }
     }
 
+    private async Task RefreshCascadeSlotOllamaModels(int slot)
+    {
+        var slotData = slot switch
+        {
+            1 => CascadeService.CurrentMatrix.Slot1,
+            2 => CascadeService.CurrentMatrix.Slot2,
+            3 => CascadeService.CurrentMatrix.Slot3,
+            _ => null
+        };
+
+        if (slotData == null) return;
+
+        switch (slot)
+        {
+            case 1: CascadeSlot1Loading = true; break;
+            case 2: CascadeSlot2Loading = true; break;
+            case 3: CascadeSlot3Loading = true; break;
+        }
+        StateHasChanged();
+
+        try
+        {
+            OllamaModelsResult result;
+
+            // For OllamaLocal, call directly from browser to localhost
+            if (slotData.Provider == "OllamaLocal")
+            {
+                result = await CascadeService.GetLocalOllamaModelsAsync();
+            }
+            else
+            {
+                // For remote Ollama, go through server
+                var endpoint = slotData.Endpoint;
+                if (string.IsNullOrEmpty(endpoint))
+                    endpoint = "http://localhost:11434";
+                else if (!endpoint.StartsWith("http"))
+                    endpoint = "http://" + endpoint;
+
+                result = await AiService.GetOllamaModelsAsync(endpoint);
+            }
+
+            var models = result.Success ? result.Models : new List<string>();
+
+            switch (slot)
+            {
+                case 1:
+                    CascadeSlot1OllamaModels = models;
+                    if (models.Count > 0 && string.IsNullOrEmpty(CascadeService.CurrentMatrix.Slot1.Model))
+                        CascadeService.CurrentMatrix.Slot1.Model = models[0];
+                    break;
+                case 2:
+                    CascadeSlot2OllamaModels = models;
+                    if (models.Count > 0 && string.IsNullOrEmpty(CascadeService.CurrentMatrix.Slot2.Model))
+                        CascadeService.CurrentMatrix.Slot2.Model = models[0];
+                    break;
+                case 3:
+                    CascadeSlot3OllamaModels = models;
+                    if (models.Count > 0 && string.IsNullOrEmpty(CascadeService.CurrentMatrix.Slot3.Model))
+                        CascadeService.CurrentMatrix.Slot3.Model = models[0];
+                    break;
+            }
+        }
+        finally
+        {
+            switch (slot)
+            {
+                case 1: CascadeSlot1Loading = false; break;
+                case 2: CascadeSlot2Loading = false; break;
+                case 3: CascadeSlot3Loading = false; break;
+            }
+            StateHasChanged();
+        }
+    }
+
     private async Task GenerateFromAi()
     {
         if (string.IsNullOrWhiteSpace(AiPrompt) || AiGenerating) return;
@@ -2236,7 +4278,7 @@
             // Clear canvas if option is checked
             if (AiClearBeforeGenerate)
             {
-                Elements.Clear();
+                foreach (var layer in Layers) layer.Elements.Clear();
                 ClearSelection();
             }
 
@@ -2292,7 +4334,7 @@
             // Clear canvas if option is checked
             if (AiClearBeforeGenerate)
             {
-                Elements.Clear();
+                foreach (var layer in Layers) layer.Elements.Clear();
                 ClearSelection();
             }
 
@@ -2349,12 +4391,21 @@
 
     /// <summary>
     /// Execute a list of draw commands programmatically.
+    /// Creates a new layer for AI-generated content.
     /// </summary>
     public CommandResult ExecuteCommands(List<DrawCommand> commands)
     {
+        SaveUndoState();
+
+        // Create a new layer for AI-generated content
+        var aiLayer = new Layer { Name = $"AI Drawing {Layers.Count}" };
+        Layers.Add(aiLayer);
+        CurrentLayerIndex = Layers.Count - 1;
+
         var width = (double)CanvasWidth;
         var height = (double)CanvasHeight;
-        var result = _commandExecutor.Execute(commands, Elements, ref width, ref height, ref _canvasFill);
+        var result = _commandExecutor.Execute(commands, aiLayer.Elements, ref width, ref height, ref _canvasFill);
+
         // Only update canvas size if not locked
         if (!LockCanvasSize)
         {
@@ -2367,12 +4418,21 @@
 
     /// <summary>
     /// Execute a JSON drawing response string.
+    /// Creates a new layer for AI-generated content.
     /// </summary>
     public CommandResult ExecuteJson(string json)
     {
+        SaveUndoState();
+
+        // Create a new layer for AI-generated content
+        var aiLayer = new Layer { Name = $"AI Drawing {Layers.Count}" };
+        Layers.Add(aiLayer);
+        CurrentLayerIndex = Layers.Count - 1;
+
         var width = (double)CanvasWidth;
         var height = (double)CanvasHeight;
-        var result = _commandExecutor.ExecuteJson(json, Elements, ref width, ref height, ref _canvasFill);
+        var result = _commandExecutor.ExecuteJson(json, aiLayer.Elements, ref width, ref height, ref _canvasFill);
+
         // Only update canvas size if not locked
         if (!LockCanvasSize)
         {
