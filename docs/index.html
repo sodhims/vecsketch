@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VecSketch</title>
+    <base href="/vecsketch/" />
+    <link href="_framework/dotnet.j9hdztd9my.js" rel="preload" as="script" fetchpriority="high" crossorigin="anonymous" integrity="sha256-WcDO96d+ofPqtgNJQwh8Ggf/HqsOPxSd/YFW4oosPgk=" />
+    <link rel="stylesheet" href="lib/bootstrap/dist/css/bootstrap.min.css" />
+    <link rel="stylesheet" href="css/app.css" />
+    <link rel="icon" type="image/png" href="favicon.png" />
+    <link href="VecSketch.Client.styles.css" rel="stylesheet" />
+    <script type="importmap">{
+  "imports": {
+    "./_framework/blazor.webassembly.js": "./_framework/blazor.webassembly.66stpp682q.js",
+    "./_framework/dotnet.js": "./_framework/dotnet.j9hdztd9my.js",
+    "./_framework/dotnet.native.js": "./_framework/dotnet.native.cs8mcre4gh.js",
+    "./_framework/dotnet.runtime.js": "./_framework/dotnet.runtime.0j6ezsi0n0.js"
+  },
+  "scopes": {},
+  "integrity": {
+    "./_framework/blazor.webassembly.66stpp682q.js": "sha256-3lCWrko3zwspV40aQhs2S/IMkRSarnHRKIdkHhuXIBA=",
+    "./_framework/blazor.webassembly.js": "sha256-3lCWrko3zwspV40aQhs2S/IMkRSarnHRKIdkHhuXIBA=",
+    "./_framework/dotnet.j9hdztd9my.js": "sha256-WcDO96d+ofPqtgNJQwh8Ggf/HqsOPxSd/YFW4oosPgk=",
+    "./_framework/dotnet.js": "sha256-WcDO96d+ofPqtgNJQwh8Ggf/HqsOPxSd/YFW4oosPgk=",
+    "./_framework/dotnet.native.cs8mcre4gh.js": "sha256-/I3SDHIle7heAxlUGBrgxax+lkKyWyRLBVEJmTHJSCs=",
+    "./_framework/dotnet.native.js": "sha256-/I3SDHIle7heAxlUGBrgxax+lkKyWyRLBVEJmTHJSCs=",
+    "./_framework/dotnet.runtime.0j6ezsi0n0.js": "sha256-jCsbbdXoVd1zzGc0fQT2sz4mKuv0ANdurPVGo5Sc2jg=",
+    "./_framework/dotnet.runtime.js": "sha256-jCsbbdXoVd1zzGc0fQT2sz4mKuv0ANdurPVGo5Sc2jg="
+  }
+}</script>
+</head>
+
+<body>
+    <div id="app">
+        <svg class="loading-progress">
+            <circle r="40%" cx="50%" cy="50%" />
+            <circle r="40%" cx="50%" cy="50%" />
+        </svg>
+        <div class="loading-progress-text"></div>
+    </div>
+
+    <div id="blazor-error-ui">
+        An unhandled error has occurred.
+        <a href="." class="reload">Reload</a>
+        <span class="dismiss">🗙</span>
+    </div>
+    <script src="_framework/blazor.webassembly.js"></script>
+    <script>
+        // Global reference for paste handling
+        let dotNetReference = null;
+
+        function setupPasteHandler(dotNetRef) {
+            dotNetReference = dotNetRef;
+            // Paste handling disabled - was causing unwanted text panel popups
+            // Image paste can be re-enabled later if needed
+        }
+
+        async function handlePaste(event) {
+            // Disabled
+        }
+
+        async function pasteFromClipboard() {
+            if (!dotNetReference) {
+                console.log('Paste: No dotNetReference');
+                return;
+            }
+
+            try {
+                // Try to read from clipboard API (requires permission)
+                const clipboardItems = await navigator.clipboard.read();
+
+                for (const item of clipboardItems) {
+                    // Check for image types
+                    const imageTypes = item.types.filter(type => type.startsWith('image/'));
+                    if (imageTypes.length > 0) {
+                        const blob = await item.getType(imageTypes[0]);
+                        const reader = new FileReader();
+
+                        reader.onload = function(e) {
+                            const dataUrl = e.target.result;
+                            const img = new Image();
+                            img.onload = function() {
+                                dotNetReference.invokeMethodAsync('HandlePastedImage', dataUrl, img.width, img.height);
+                            };
+                            img.src = dataUrl;
+                        };
+
+                        reader.readAsDataURL(blob);
+                        return;
+                    }
+
+                    // Check for text
+                    if (item.types.includes('text/plain')) {
+                        const blob = await item.getType('text/plain');
+                        const text = await blob.text();
+                        dotNetReference.invokeMethodAsync('HandlePastedText', text);
+                        return;
+                    }
+                }
+            } catch (err) {
+                // Fallback: try reading text from clipboard
+                try {
+                    const text = await navigator.clipboard.readText();
+                    if (text) {
+                        dotNetReference.invokeMethodAsync('HandlePastedText', text);
+                    }
+                } catch (textErr) {
+                    console.log('Clipboard access denied. Use Ctrl+V to paste.');
+                }
+            }
+        }
+
+        function downloadSvg(svgContent, filename) {
+            const blob = new Blob([svgContent], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        async function getSelectedFile(inputElement) {
+            if (!inputElement || !inputElement.files || inputElement.files.length === 0) {
+                return null;
+            }
+            const file = inputElement.files[0];
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    // Get base64 data without the data URL prefix
+                    const base64 = e.target.result.split(',')[1];
+                    resolve({ name: file.name, data: base64 });
+                };
+                reader.onerror = function() {
+                    resolve(null);
+                };
+                reader.readAsDataURL(file);
+            });
+        }
+
+        function triggerFileInput(inputElement) {
+            if (inputElement) {
+                inputElement.click();
+            }
+        }
+
+        function getImageDimensions(dataUrl) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.onload = function() {
+                    resolve({ width: img.width, height: img.height });
+                };
+                img.onerror = function() {
+                    resolve({ width: 0, height: 0 });
+                };
+                img.src = dataUrl;
+            });
+        }
+
+        // Transform client/screen coordinates to SVG viewBox coordinates
+        // clientX, clientY are viewport-relative coordinates (e.clientX, e.clientY)
+        function screenToSvgCoords(svgElement, clientX, clientY) {
+            if (!svgElement) return { x: clientX, y: clientY };
+
+            // Create an SVG point in screen/client space
+            const point = svgElement.createSVGPoint();
+            point.x = clientX;
+            point.y = clientY;
+
+            // Get the inverse of the screen transformation matrix
+            const ctm = svgElement.getScreenCTM();
+            if (!ctm) return { x: clientX, y: clientY };
+
+            // Transform the point to SVG viewBox coordinate space
+            const svgPoint = point.matrixTransform(ctm.inverse());
+            return { x: svgPoint.x, y: svgPoint.y };
+        }
+
+        // Get SVG element's transformation info for coordinate conversion
+        // Returns info needed to convert element-relative offset to viewBox coords:
+        // svg_x = (offsetX - viewBoxOffsetX) / scaleX
+        // svg_y = (offsetY - viewBoxOffsetY) / scaleY
+        function getSvgScaleInfo(svgElement) {
+            if (!svgElement) return { scaleX: 1, scaleY: 1, viewBoxOffsetX: 0, viewBoxOffsetY: 0 };
+
+            const ctm = svgElement.getScreenCTM();
+            if (!ctm) return { scaleX: 1, scaleY: 1, viewBoxOffsetX: 0, viewBoxOffsetY: 0 };
+
+            // Get element's position on screen
+            const rect = svgElement.getBoundingClientRect();
+
+            // ctm.e/ctm.f is the screen position of the SVG viewBox origin
+            // The viewBox origin's position relative to the element is:
+            // viewBoxOffsetX = ctm.e - rect.left (in screen pixels)
+            // To convert offset to SVG: svg_x = (offsetX - viewBoxOffsetX) / ctm.a
+
+            return {
+                scaleX: ctm.a,
+                scaleY: ctm.d,
+                viewBoxOffsetX: ctm.e - rect.left,
+                viewBoxOffsetY: ctm.f - rect.top
+            };
+        }
+
+        // Make a panel draggable by its header
+        function makeDraggable(panelSelector, headerSelector) {
+            const panel = document.querySelector(panelSelector);
+            const header = document.querySelector(headerSelector);
+            if (!panel || !header) return;
+
+            let isDragging = false;
+            let startX, startY, startLeft, startTop;
+
+            header.addEventListener('mousedown', function(e) {
+                if (e.target.tagName === 'BUTTON') return; // Don't drag when clicking buttons
+                isDragging = true;
+                startX = e.clientX;
+                startY = e.clientY;
+                const rect = panel.getBoundingClientRect();
+                startLeft = rect.left;
+                startTop = rect.top;
+                e.preventDefault();
+            });
+
+            document.addEventListener('mousemove', function(e) {
+                if (!isDragging) return;
+                const dx = e.clientX - startX;
+                const dy = e.clientY - startY;
+                panel.style.left = (startLeft + dx) + 'px';
+                panel.style.top = (startTop + dy) + 'px';
+                panel.style.right = 'auto'; // Clear right positioning when dragging
+            });
+
+            document.addEventListener('mouseup', function() {
+                isDragging = false;
+            });
+        }
+
+        // Touch blocking - block touch pointer events only, pen/mouse pass through unaffected
+        let touchBlockingEnabled = false;
+
+        function setTouchBlocking(enabled) {
+            touchBlockingEnabled = enabled;
+            document.querySelector('.canvas')?.classList.toggle('touch-disabled', enabled);
+        }
+
+        // Single handler added once - only active when touchBlockingEnabled is true
+        document.addEventListener('pointerdown', function(e) {
+            if (touchBlockingEnabled && e.pointerType === 'touch') {
+                const canvas = e.target.closest('.canvas');
+                if (canvas) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }
+        }, { capture: true, passive: false });
+
+        document.addEventListener('pointermove', function(e) {
+            if (touchBlockingEnabled && e.pointerType === 'touch') {
+                const canvas = e.target.closest('.canvas');
+                if (canvas) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }
+        }, { capture: true, passive: false });
+
+        document.addEventListener('pointerup', function(e) {
+            if (touchBlockingEnabled && e.pointerType === 'touch') {
+                const canvas = e.target.closest('.canvas');
+                if (canvas) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+            }
+        }, { capture: true, passive: false });
+
+        // Prevent default touch behaviors that interfere with drawing
+        document.addEventListener('touchstart', function(e) {
+            const canvas = e.target.closest('.canvas');
+            if (canvas) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        document.addEventListener('touchmove', function(e) {
+            const canvas = e.target.closest('.canvas');
+            if (canvas) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        // Parse SVG content and extract element data for import
+        function parseSvgContent(svgContent) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(svgContent, 'image/svg+xml');
+
+            // Check for parsing errors
+            const parseError = doc.querySelector('parsererror');
+            if (parseError) {
+                console.error('SVG parsing error:', parseError.textContent);
+                return [];
+            }
+
+            const svg = doc.querySelector('svg');
+            if (!svg) {
+                console.error('No SVG element found');
+                return [];
+            }
+
+            const elements = [];
+            const supportedTypes = ['rect', 'circle', 'ellipse', 'line', 'path', 'polygon', 'polyline'];
+
+            // Helper to get computed style or attribute value
+            function getStyle(el, attr, defaultVal) {
+                const styleVal = el.style[attr];
+                if (styleVal) return styleVal;
+                const attrVal = el.getAttribute(attr);
+                return attrVal || defaultVal;
+            }
+
+            // Helper to parse color (handle rgb(), named colors, etc.)
+            function parseColor(color, defaultColor) {
+                if (!color || color === 'none' || color === 'transparent') return color || defaultColor;
+                return color;
+            }
+
+            // Recursively process all elements, including those in groups
+            function processElement(el, transform) {
+                const tagName = el.tagName.toLowerCase();
+
+                // Handle groups - recurse into children with combined transform
+                if (tagName === 'g') {
+                    const groupTransform = el.getAttribute('transform') || '';
+                    const combinedTransform = transform ? transform + ' ' + groupTransform : groupTransform;
+                    for (const child of el.children) {
+                        processElement(child, combinedTransform);
+                    }
+                    return;
+                }
+
+                if (!supportedTypes.includes(tagName)) return;
+
+                const element = {
+                    type: tagName,
+                    stroke: parseColor(getStyle(el, 'stroke', null), '#000000'),
+                    strokeWidth: parseFloat(getStyle(el, 'stroke-width', '1')) || 1,
+                    fill: parseColor(getStyle(el, 'fill', null), 'none'),
+                    transform: transform || el.getAttribute('transform') || null
+                };
+
+                switch (tagName) {
+                    case 'rect':
+                        element.x = parseFloat(el.getAttribute('x')) || 0;
+                        element.y = parseFloat(el.getAttribute('y')) || 0;
+                        element.width = parseFloat(el.getAttribute('width')) || 0;
+                        element.height = parseFloat(el.getAttribute('height')) || 0;
+                        element.rx = parseFloat(el.getAttribute('rx')) || 0;
+                        element.ry = parseFloat(el.getAttribute('ry')) || 0;
+                        break;
+
+                    case 'circle':
+                        element.cx = parseFloat(el.getAttribute('cx')) || 0;
+                        element.cy = parseFloat(el.getAttribute('cy')) || 0;
+                        element.r = parseFloat(el.getAttribute('r')) || 0;
+                        break;
+
+                    case 'ellipse':
+                        element.cx = parseFloat(el.getAttribute('cx')) || 0;
+                        element.cy = parseFloat(el.getAttribute('cy')) || 0;
+                        element.rx = parseFloat(el.getAttribute('rx')) || 0;
+                        element.ry = parseFloat(el.getAttribute('ry')) || 0;
+                        break;
+
+                    case 'line':
+                        element.x1 = parseFloat(el.getAttribute('x1')) || 0;
+                        element.y1 = parseFloat(el.getAttribute('y1')) || 0;
+                        element.x2 = parseFloat(el.getAttribute('x2')) || 0;
+                        element.y2 = parseFloat(el.getAttribute('y2')) || 0;
+                        break;
+
+                    case 'path':
+                        element.d = el.getAttribute('d') || '';
+                        break;
+
+                    case 'polygon':
+                    case 'polyline':
+                        element.points = el.getAttribute('points') || '';
+                        break;
+                }
+
+                elements.push(element);
+            }
+
+            // Process all children of the SVG
+            for (const child of svg.children) {
+                processElement(child, null);
+            }
+
+            return elements;
+        }
+
+        // Download a text file (used for JSON export)
+        function downloadTextFile(filename, content, mimeType) {
+            const blob = new Blob([content], { type: mimeType || 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+    </script>
+</body>
+
+</html>
