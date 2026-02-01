@@ -14,172 +14,112 @@
 
 <div class="sketch-container @CurrentThemeClass" @ref="containerElement" tabindex="0" @onkeydown="OnKeyDown">
     <div class="toolbar">
-        <div class="tool-group">
-            <label>Tool:</label>
-            <select @bind="CurrentToolIndex" class="tool-select">
-                <option value="0">Select (S)</option>
-                <option value="1">Line (L)</option>
-                <option value="2">Pencil (P)</option>
-                <option value="3">Rectangle (R)</option>
-                <option value="4">Circle (C)</option>
-                <option value="5">Ellipse (E)</option>
-                <option value="6">Triangle (T)</option>
-                <option value="7">Polygon (G)</option>
-                <option value="8">Star</option>
-                <option value="9">Arrow (A)</option>
-                <option value="10">Arc (U)</option>
-                <option value="11">Text (X)</option>
+        <select @bind="CurrentToolIndex" class="tool-select" title="Drawing tool">
+            <option value="0">Select</option>
+            <option value="1">Line</option>
+            <option value="2">Pencil</option>
+            <option value="3">Rect</option>
+            <option value="4">Circle</option>
+            <option value="5">Ellipse</option>
+            <option value="6">Triangle</option>
+            <option value="7">Polygon</option>
+            <option value="8">Star</option>
+            <option value="9">Arrow</option>
+            <option value="10">Arc</option>
+            <option value="11">Text</option>
+        </select>
+
+        <button class="btn btn-sm @(ChainMode ? "btn-success" : "btn-outline-secondary")"
+                @onclick="ToggleChainMode" title="Chain mode (K)">⛓</button>
+
+        <button class="btn btn-sm @(ArrayMode ? "btn-success" : "btn-outline-secondary")"
+                @onclick="() => ArrayMode = !ArrayMode" title="Array mode">▦</button>
+        @if (ArrayMode)
+        {
+            <select @bind="ArrayCount" class="width-select" title="Copies">
+                @for (int i = 2; i <= 10; i++) { <option value="@i">@i</option> }
             </select>
-        </div>
-
-        <div class="tool-group">
-            <button class="btn btn-sm @(ChainMode ? "btn-success" : "btn-outline-secondary")"
-                    @onclick="ToggleChainMode" title="Chain mode - end point becomes next start point">
-                Chain (K)
-            </button>
-        </div>
-
-        <div class="tool-group">
-            <button class="btn btn-sm @(ArrayMode ? "btn-success" : "btn-outline-secondary")"
-                    @onclick="() => ArrayMode = !ArrayMode" title="Array mode - create multiple copies">
-                Array
-            </button>
-            @if (ArrayMode)
-            {
-                <select @bind="ArrayCount" class="width-select" title="Number of copies">
-                    <option value="2">2</option>
-                    <option value="3">3</option>
-                    <option value="4">4</option>
-                    <option value="5">5</option>
-                    <option value="6">6</option>
-                    <option value="8">8</option>
-                    <option value="10">10</option>
-                </select>
-                <button class="btn btn-xs @(ArrayHorizontal ? "btn-primary" : "btn-outline-secondary")"
-                        @onclick="() => ArrayHorizontal = true" title="Horizontal">H</button>
-                <button class="btn btn-xs @(!ArrayHorizontal ? "btn-primary" : "btn-outline-secondary")"
-                        @onclick="() => ArrayHorizontal = false" title="Vertical">V</button>
-                <select @bind="ArraySpacing" class="width-select" title="Spacing">
-                    <option value="30">30px</option>
-                    <option value="50">50px</option>
-                    <option value="75">75px</option>
-                    <option value="100">100px</option>
-                    <option value="150">150px</option>
-                </select>
-            }
-        </div>
+            <button class="btn btn-xs @(ArrayHorizontal ? "btn-primary" : "btn-outline-secondary")"
+                    @onclick="() => ArrayHorizontal = true" title="Horizontal">H</button>
+            <button class="btn btn-xs @(!ArrayHorizontal ? "btn-primary" : "btn-outline-secondary")"
+                    @onclick="() => ArrayHorizontal = false" title="Vertical">V</button>
+            <select @bind="ArraySpacing" class="width-select" title="Spacing">
+                @foreach (var sp in new[] {30,50,75,100,150}) { <option value="@sp">@sp</option> }
+            </select>
+        }
 
         @if (CurrentTool == DrawingTool.Polygon)
         {
-            <div class="tool-group">
-                <label>Sides:</label>
-                <select @bind="PolygonSides" class="width-select">
-                    <option value="3">3</option>
-                    <option value="5">5</option>
-                    <option value="6">6</option>
-                    <option value="8">8</option>
-                    <option value="10">10</option>
-                    <option value="12">12</option>
-                </select>
-            </div>
+            <select @bind="PolygonSides" class="width-select" title="Sides">
+                @foreach (var s in new[] {3,5,6,8,10,12}) { <option value="@s">@s</option> }
+            </select>
         }
 
         @if (CurrentTool == DrawingTool.Star)
         {
-            <div class="tool-group">
-                <label>Points:</label>
-                <select @bind="StarPoints" class="width-select">
-                    <option value="4">4</option>
-                    <option value="5">5</option>
-                    <option value="6">6</option>
-                    <option value="8">8</option>
-                </select>
-            </div>
+            <select @bind="StarPoints" class="width-select" title="Points">
+                @foreach (var p in new[] {4,5,6,8}) { <option value="@p">@p</option> }
+            </select>
         }
 
         @if (CurrentTool == DrawingTool.Text)
         {
-            <div class="tool-group">
-                <label>Size:</label>
-                <select @bind="FontSizeIndex" class="width-select">
-                    <option value="0">12px</option>
-                    <option value="1">16px</option>
-                    <option value="2">20px</option>
-                    <option value="3">24px</option>
-                    <option value="4">32px</option>
-                    <option value="5">48px</option>
-                </select>
-            </div>
+            <select @bind="FontSizeIndex" class="width-select" title="Font size">
+                <option value="0">12</option>
+                <option value="1">16</option>
+                <option value="2">20</option>
+                <option value="3">24</option>
+                <option value="4">32</option>
+                <option value="5">48</option>
+            </select>
         }
 
         @if (CurrentTool == DrawingTool.Arc)
         {
-            <div class="tool-group">
-                <label>Arrow:</label>
-                <input type="checkbox" @bind="ArcShowArrow" title="Show arrow at end" />
-            </div>
+            <input type="checkbox" @bind="ArcShowArrow" title="Show arrow" />
         }
 
-        <div class="tool-group">
-            <label>Stroke:</label>
-            <input type="color" @bind="StrokeColor" class="color-picker" />
-        </div>
+        <input type="color" @bind="StrokeColor" class="color-picker" title="Stroke color" />
 
-        <div class="tool-group">
-            <label>Width:</label>
-            <select @bind="StrokeWidthIndex" class="width-select">
-                <option value="0">1px</option>
-                <option value="1">2px</option>
-                <option value="2">4px</option>
-                <option value="3">6px</option>
-                <option value="4">8px</option>
-                <option value="5">12px</option>
-            </select>
-        </div>
+        <select @bind="StrokeWidthIndex" class="width-select" title="Stroke width">
+            <option value="0">1</option>
+            <option value="1">2</option>
+            <option value="2">4</option>
+            <option value="3">6</option>
+            <option value="4">8</option>
+            <option value="5">12</option>
+        </select>
 
-        <div class="tool-group">
-            <label>Fill:</label>
-            <input type="checkbox" @bind="UseFillToggle" />
-            <input type="color" @bind="FillColor" class="color-picker" />
-        </div>
+        <input type="checkbox" @bind="UseFillToggle" title="Enable fill" />
+        <input type="color" @bind="FillColor" class="color-picker" title="Fill color" disabled="@(!UseFillToggle)" />
 
-        <div class="tool-group">
-            <label>Touch:</label>
-            <input type="checkbox" checked="@TouchEnabled" @onchange="OnTouchToggleChange" title="Uncheck to disable touch for pen drawing" />
-        </div>
+        <input type="checkbox" checked="@TouchEnabled" @onchange="OnTouchToggleChange" title="Touch enabled" />
 
-        <div class="tool-group">
-            <label>Theme:</label>
-            <select @bind="CurrentTheme" class="tool-select" @bind:after="OnThemeChanged">
-                <option value="">Default</option>
-                <option value="pinkish">Pinkish</option>
-                <option value="reddish">Reddish</option>
-                <option value="orangish">Orangish</option>
-                <option value="yellowish">Yellowish</option>
-                <option value="greenish">Greenish</option>
-                <option value="bluish">Bluish</option>
-                <option value="purplish">Purplish</option>
-                <option value="preppy">Preppy</option>
-                <option value="darkish">Darkish</option>
-            </select>
-        </div>
+        <select @bind="CurrentTheme" class="tool-select" @bind:after="OnThemeChanged" title="Theme">
+            <option value="">Theme</option>
+            <option value="pinkish">Pink</option>
+            <option value="reddish">Red</option>
+            <option value="orangish">Orange</option>
+            <option value="yellowish">Yellow</option>
+            <option value="greenish">Green</option>
+            <option value="bluish">Blue</option>
+            <option value="purplish">Purple</option>
+            <option value="preppy">Preppy</option>
+            <option value="darkish">Dark</option>
+        </select>
 
-        <div class="tool-group release-info">
-            <span class="release-label">Build: @BuildTimestamp</span>
-        </div>
+        <span class="release-label" title="Build timestamp">@BuildTimestamp.Substring(11)</span>
 
         <div class="tool-group actions">
-            <button class="btn btn-sm btn-outline-light" @onclick="OnPasteClick">Paste</button>
-            <button class="btn btn-sm btn-outline-light" @onclick="OnClearClick">Clear</button>
-            <button class="btn btn-sm btn-outline-light" @onclick="OnCleanupClick">Cleanup</button>
-            <button class="btn btn-sm btn-outline-light" @onclick="OnUndoClick">Undo</button>
-            <button class="btn btn-sm btn-outline-light" @onclick="OnExportClick">Export</button>
-            <button class="btn btn-sm btn-outline-light" @onclick="OnImportClick" disabled="@IsImporting">
-                @(IsImporting ? "Importing..." : "Import")
-            </button>
-            <button class="btn btn-sm @(ShowLayersPanel ? "btn-warning" : "btn-outline-light")" @onclick="ToggleLayersPanel">Layers</button>
-            <button class="btn btn-sm @(ShowRecordingPanel ? "btn-warning" : "btn-outline-light") @(IsRecording ? "recording-active" : "")" @onclick="ToggleRecordingPanel">
-                @(IsRecording ? "● REC" : "Record")
+            <button class="btn btn-sm btn-outline-light" @onclick="OnPasteClick" title="Paste">📋</button>
+            <button class="btn btn-sm btn-outline-light" @onclick="OnClearClick" title="Clear">🗑</button>
+            <button class="btn btn-sm btn-outline-light" @onclick="OnCleanupClick" title="Cleanup">🧹</button>
+            <button class="btn btn-sm btn-outline-light" @onclick="OnUndoClick" title="Undo">↩</button>
+            <button class="btn btn-sm btn-outline-light" @onclick="OnExportClick" title="Export">💾</button>
+            <button class="btn btn-sm btn-outline-light" @onclick="OnImportClick" disabled="@IsImporting" title="Import">📂</button>
+            <button class="btn btn-sm @(ShowLayersPanel ? "btn-warning" : "btn-outline-light")" @onclick="ToggleLayersPanel" title="Layers">☰</button>
+            <button class="btn btn-sm @(ShowRecordingPanel ? "btn-warning" : "btn-outline-light") @(IsRecording ? "recording-active" : "")" @onclick="ToggleRecordingPanel" title="Record">
+                @(IsRecording ? "●" : "⏺")
             </button>
         </div>
     </div>
