@@ -1,0 +1,32 @@
+{
+  "timestamp": "2026-02-01T05:06:19.1319521Z",
+  "inputCount": 2,
+  "algorithm": "Clipper2",
+  "regions": [
+    {
+      "label": "S1Only",
+      "filename": "S1Only.svg",
+      "indices": [
+        0
+      ],
+      "area": 5613.505900000002
+    },
+    {
+      "label": "S2Only",
+      "filename": "S2Only.svg",
+      "indices": [
+        1
+      ],
+      "area": 5613.505900000001
+    },
+    {
+      "label": "S1\u2229S2Only",
+      "filename": "S1_intersect_S2Only.svg",
+      "indices": [
+        0,
+        1
+      ],
+      "area": 2230.7061999999996
+    }
+  ]
+}

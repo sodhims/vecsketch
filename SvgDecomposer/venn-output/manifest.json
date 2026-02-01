@@ -1,0 +1,9 @@
+{
+  "timestamp": "2026-02-01T13:22:48.0042500Z",
+  "inputCount": 2,
+  "regions": [
+    { "label": "S1Only", "file": "S1Only.svg", "area": 5613.505899999996 },
+    { "label": "S2Only", "file": "S2Only.svg", "area": 5613.505900000001 },
+    { "label": "S1_intersect_S2Only", "file": "S1_intersect_S2Only.svg", "area": 2230.7062000000005 }
+  ]
+}

@@ -20,8 +20,15 @@ public abstract class VectorElement
     public virtual bool IntersectsRect(double rx, double ry, double rw, double rh)
     {
         var bounds = GetBounds();
-        return !(bounds.X > rx + rw || bounds.X + bounds.Width < rx ||
-                 bounds.Y > ry + rh || bounds.Y + bounds.Height < ry);
+        // Use minimum dimensions for selection detection to handle thin elements (lines, paths)
+        var minWidth = Math.Max(bounds.Width, 2);
+        var minHeight = Math.Max(bounds.Height, 2);
+        // Center the expanded bounds around the original center
+        var expandedX = bounds.X - (minWidth - bounds.Width) / 2;
+        var expandedY = bounds.Y - (minHeight - bounds.Height) / 2;
+
+        return !(expandedX > rx + rw || expandedX + minWidth < rx ||
+                 expandedY > ry + rh || expandedY + minHeight < ry);
     }
 
     protected string GetSelectionStyle() => IsSelected ? " stroke-dasharray=\"4 2\" filter=\"url(#selection-glow)\"" : "";
@@ -272,12 +279,6 @@ public class SvgPathElement : VectorElement
                 }
             }
 
-            if (!double.TryParse(part, out double x)) continue;
-            if (i + 1 >= parts.Length) break;
-
-            i++;
-            if (!double.TryParse(parts[i], out double y)) continue;
-
             switch (char.ToUpper(lastCommand))
             {
                 case 'M':
@@ -286,6 +287,11 @@ public class SvgPathElement : VectorElement
                 case 'S':
                 case 'Q':
                 case 'T':
+                    if (!double.TryParse(part, out double x)) continue;
+                    if (i + 1 >= parts.Length) break;
+                    i++;
+                    if (!double.TryParse(parts[i], out double y)) continue;
+
                     if (char.IsUpper(lastCommand))
                     {
                         currentX = x;
@@ -301,6 +307,42 @@ public class SvgPathElement : VectorElement
                     maxX = Math.Max(maxX, currentX);
                     maxY = Math.Max(maxY, currentY);
                     break;
+
+                case 'A':
+                    // Arc: A rx ry x-axis-rotation large-arc-flag sweep-flag x y
+                    // Skip 5 parameters (rx, ry, rotation, large-arc, sweep) then get endpoint x,y
+                    if (!double.TryParse(part, out _)) continue; // rx
+                    for (int skip = 0; skip < 4 && i + 1 < parts.Length; skip++)
+                    {
+                        i++;
+                        // Skip ry, rotation, large-arc, sweep
+                    }
+                    if (i + 1 >= parts.Length) break;
+                    i++;
+                    if (!double.TryParse(parts[i], out double ax)) continue;
+                    if (i + 1 >= parts.Length) break;
+                    i++;
+                    if (!double.TryParse(parts[i], out double ay)) continue;
+
+                    if (char.IsUpper(lastCommand))
+                    {
+                        currentX = ax;
+                        currentY = ay;
+                    }
+                    else
+                    {
+                        currentX += ax;
+                        currentY += ay;
+                    }
+                    minX = Math.Min(minX, currentX);
+                    minY = Math.Min(minY, currentY);
+                    maxX = Math.Max(maxX, currentX);
+                    maxY = Math.Max(maxY, currentY);
+                    break;
+
+                case 'Z':
+                    // Close path - no coordinates to process
+                    break;
             }
         }
 
@@ -313,13 +355,13 @@ public class SvgPathElement : VectorElement
 
 public record Point(double X, double Y);
 
-public enum DrawingTool 
-{ 
-    Select, 
-    Line, 
-    Pencil, 
-    Rectangle, 
-    Circle, 
+public enum DrawingTool
+{
+    Select,
+    Line,
+    Pencil,
+    Rectangle,
+    Circle,
     Ellipse,
     Triangle,
     Polygon,
@@ -327,3 +369,4 @@ public enum DrawingTool
     Arrow,
     Text
 }
+

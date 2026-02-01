@@ -17,18 +17,56 @@
         <div class="tool-group">
             <label>Tool:</label>
             <select @bind="CurrentToolIndex" class="tool-select">
-                <option value="0">Select</option>
-                <option value="1">Line</option>
-                <option value="2">Pencil</option>
-                <option value="3">Rectangle</option>
-                <option value="4">Circle</option>
-                <option value="5">Ellipse</option>
-                <option value="6">Triangle</option>
-                <option value="7">Polygon</option>
+                <option value="0">Select (S)</option>
+                <option value="1">Line (L)</option>
+                <option value="2">Pencil (P)</option>
+                <option value="3">Rectangle (R)</option>
+                <option value="4">Circle (C)</option>
+                <option value="5">Ellipse (E)</option>
+                <option value="6">Triangle (T)</option>
+                <option value="7">Polygon (G)</option>
                 <option value="8">Star</option>
-                <option value="9">Arrow</option>
-                <option value="10">Text</option>
+                <option value="9">Arrow (A)</option>
+                <option value="10">Arc (U)</option>
+                <option value="11">Text (X)</option>
             </select>
+        </div>
+
+        <div class="tool-group">
+            <button class="btn btn-sm @(ChainMode ? "btn-success" : "btn-outline-secondary")"
+                    @onclick="ToggleChainMode" title="Chain mode - end point becomes next start point">
+                Chain (K)
+            </button>
+        </div>
+
+        <div class="tool-group">
+            <button class="btn btn-sm @(ArrayMode ? "btn-success" : "btn-outline-secondary")"
+                    @onclick="() => ArrayMode = !ArrayMode" title="Array mode - create multiple copies">
+                Array
+            </button>
+            @if (ArrayMode)
+            {
+                <select @bind="ArrayCount" class="width-select" title="Number of copies">
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="6">6</option>
+                    <option value="8">8</option>
+                    <option value="10">10</option>
+                </select>
+                <button class="btn btn-xs @(ArrayHorizontal ? "btn-primary" : "btn-outline-secondary")"
+                        @onclick="() => ArrayHorizontal = true" title="Horizontal">H</button>
+                <button class="btn btn-xs @(!ArrayHorizontal ? "btn-primary" : "btn-outline-secondary")"
+                        @onclick="() => ArrayHorizontal = false" title="Vertical">V</button>
+                <select @bind="ArraySpacing" class="width-select" title="Spacing">
+                    <option value="30">30px</option>
+                    <option value="50">50px</option>
+                    <option value="75">75px</option>
+                    <option value="100">100px</option>
+                    <option value="150">150px</option>
+                </select>
+            }
         </div>
 
         @if (CurrentTool == DrawingTool.Polygon)
@@ -71,6 +109,14 @@
                     <option value="4">32px</option>
                     <option value="5">48px</option>
                 </select>
+            </div>
+        }
+
+        @if (CurrentTool == DrawingTool.Arc)
+        {
+            <div class="tool-group">
+                <label>Arrow:</label>
+                <input type="checkbox" @bind="ArcShowArrow" title="Show arrow at end" />
             </div>
         }
 
@@ -118,6 +164,10 @@
             </select>
         </div>
 
+        <div class="tool-group release-info">
+            <span class="release-label">Build: @BuildTimestamp</span>
+        </div>
+
         <div class="tool-group actions">
             <button class="btn btn-sm btn-outline-light" @onclick="OnPasteClick">Paste</button>
             <button class="btn btn-sm btn-outline-light" @onclick="OnClearClick">Clear</button>
@@ -149,7 +199,7 @@
          height="100%"
          viewBox="0 0 @CanvasWidth @CanvasHeight"
          preserveAspectRatio="xMidYMid meet"
-         class="canvas"
+         class="canvas @(CurrentToolIndex == 0 ? "select-mode" : "")"
          @onpointerdown="OnPointerDown"
          @onpointermove="OnPointerMove"
          @onpointerup="OnPointerUp"
@@ -172,6 +222,34 @@
         @if (IsDrawing && CurrentElement != null)
         {
             @((MarkupString)CurrentElement.ToSvg())
+        }
+
+        @* Arc drawing preview with markers *@
+        @if (CurrentTool == DrawingTool.Arc && ArcClickPhase > 0)
+        {
+            @* Start point marker (green) *@
+            <circle cx="@ArcStartX" cy="@ArcStartY" r="6" fill="#22c55e" stroke="white" stroke-width="2" />
+
+            @if (ArcClickPhase == 1)
+            {
+                @* Dotted line to show direction when waiting for end point *@
+                <line x1="@ArcStartX" y1="@ArcStartY" x2="@ArcPreviewX" y2="@ArcPreviewY"
+                      stroke="@StrokeColor" stroke-width="1" stroke-dasharray="4 4" opacity="0.5" />
+                @* Preview end marker (follows mouse) *@
+                <circle cx="@ArcPreviewX" cy="@ArcPreviewY" r="5" fill="none" stroke="#ef4444" stroke-width="2" stroke-dasharray="3 3" />
+            }
+
+            @if (ArcClickPhase == 2)
+            {
+                @* End point marker (red) *@
+                <circle cx="@ArcEndX" cy="@ArcEndY" r="6" fill="#ef4444" stroke="white" stroke-width="2" />
+
+                @* Preview arc (dotted) *@
+                @((MarkupString)GetArcPreviewPath())
+
+                @* Mid point marker (follows mouse, blue dashed) *@
+                <circle cx="@ArcMidX" cy="@ArcMidY" r="5" fill="none" stroke="#3b82f6" stroke-width="2" stroke-dasharray="3 3" />
+            }
         }
 
         @if (IsSelecting && SelectionStart != null && SelectionEnd != null)
@@ -301,6 +379,35 @@
                 <button class="btn btn-sm btn-outline-info" @onclick="GroupSelected" disabled="@(SelectedElements.Count < 2)">Group</button>
                 <button class="btn btn-sm btn-outline-info" @onclick="UngroupSelected" disabled="@(!HasGroupedSelection())">Ungroup</button>
             </div>
+            @if (HasDecomposableShapes())
+            {
+                <div class="prop-section">Decompose</div>
+                <div class="prop-row">
+                    <button class="btn btn-sm btn-warning" @onclick="DecomposeSelected">Create Regions</button>
+                </div>
+            }
+            @if (SelectedElements.Count >= 2)
+            {
+                <div class="prop-section">Align</div>
+                <div class="prop-row">
+                    <button class="btn btn-xs btn-outline-secondary" @onclick="AlignLeft" title="Align Left">⫷</button>
+                    <button class="btn btn-xs btn-outline-secondary" @onclick="AlignCenterH" title="Align Center H">⫿</button>
+                    <button class="btn btn-xs btn-outline-secondary" @onclick="AlignRight" title="Align Right">⫸</button>
+                    <button class="btn btn-xs btn-outline-secondary" @onclick="AlignTop" title="Align Top">⫠</button>
+                    <button class="btn btn-xs btn-outline-secondary" @onclick="AlignCenterV" title="Align Center V">⫟</button>
+                    <button class="btn btn-xs btn-outline-secondary" @onclick="AlignBottom" title="Align Bottom">⫡</button>
+                </div>
+                @if (SelectedElements.Count >= 3)
+                {
+                    <div class="prop-row">
+                        <button class="btn btn-xs btn-outline-secondary" @onclick="DistributeH" title="Distribute Horizontally">↔ Dist H</button>
+                        <button class="btn btn-xs btn-outline-secondary" @onclick="DistributeV" title="Distribute Vertically">↕ Dist V</button>
+                    </div>
+                }
+                <div class="prop-row">
+                    <button class="btn btn-xs btn-outline-secondary" @onclick="ArrangeGrid" title="Arrange in Grid">⊞ Grid</button>
+                </div>
+            }
         </div>
     }
 
@@ -331,6 +438,14 @@
                         </button>
                         <span class="layer-name">@layer.Name</span>
                         <span class="layer-count">(@layer.Elements.Count)</span>
+                        @if (layer.Elements.Count > 0)
+                        {
+                            <input type="checkbox" class="layer-select-all"
+                                   @onclick:stopPropagation="true"
+                                   checked="@AreAllLayerElementsSelected(layerIndex)"
+                                   @onchange="(e) => ToggleSelectAllOnLayer(layerIndex, (bool)(e.Value ?? false))"
+                                   title="Select all objects on this layer" />
+                        }
                     </div>
                 }
             </div>
@@ -509,11 +624,11 @@
         </div>
     }
 
-    @* Recording Editor Panel *@
+    @* Recording Editor Side Panel *@
     @if (ShowRecordingEditor && EditingRecording != null)
     {
-        <div class="recording-editor-overlay" @onclick="CloseRecordingEditor"></div>
-        <div class="recording-editor" @onclick:stopPropagation="true">
+        <div class="recording-editor-overlay"></div>
+        <div class="recording-editor">
             <div class="editor-header">
                 <span>Edit Recording: @EditingRecording.Name</span>
                 <button class="btn btn-sm btn-close" @onclick="CloseRecordingEditor">×</button>
@@ -524,18 +639,35 @@
                     <span>Duration: @((EditingRecording.DurationMs / 1000.0).ToString("F1"))s</span>
                 </div>
                 <div class="editor-toolbar">
-                    <button class="btn btn-xs btn-secondary" @onclick="NormalizeGaps" title="Even out timing gaps">Normalize Gaps</button>
-                    <button class="btn btn-xs btn-secondary" @onclick="() => ScaleTiming(0.5)" title="Half speed">0.5×</button>
-                    <button class="btn btn-xs btn-secondary" @onclick="() => ScaleTiming(2.0)" title="Double speed">2×</button>
-                    <button class="btn btn-xs btn-primary" @onclick="TestPlayEdited" disabled="@IsReplaying">▶ Test</button>
+                    <span class="toolbar-label">@(CheckedActionIndices.Count > 0 ? $"Apply to {CheckedActionIndices.Count} checked:" : "Apply to all:")</span>
+                    <button class="btn btn-xs @(CheckedActionIndices.Count > 0 ? "btn-primary" : "btn-secondary")" @onclick="NormalizeGaps" title="Even out timing gaps">Normalize</button>
+                    <button class="btn btn-xs @(CheckedActionIndices.Count > 0 ? "btn-primary" : "btn-secondary")" @onclick="() => ScaleTiming(0.25)" title="Quarter speed">0.25×</button>
+                    <button class="btn btn-xs @(CheckedActionIndices.Count > 0 ? "btn-primary" : "btn-secondary")" @onclick="() => ScaleTiming(0.5)" title="Half speed">0.5×</button>
+                    <button class="btn btn-xs @(CheckedActionIndices.Count > 0 ? "btn-primary" : "btn-secondary")" @onclick="() => ScaleTiming(2.0)" title="Double speed">2×</button>
+                    <button class="btn btn-xs @(CheckedActionIndices.Count > 0 ? "btn-primary" : "btn-secondary")" @onclick="() => ScaleTiming(4.0)" title="Quadruple speed">4×</button>
+                    <button class="btn btn-xs @(CheckedActionIndices.Count >= 2 ? "btn-primary" : "btn-secondary")" @onclick="ReverseActions" title="Reverse order (needs 2+ checked or reverses all)">Reverse</button>
+                </div>
+                <div class="editor-toolbar">
+                    <button class="btn btn-xs btn-secondary" @onclick="AddDelayAction" title="Add 1s delay after checked/selected">+Delay</button>
+                    <button class="btn btn-xs btn-outline-danger" @onclick="DeleteCheckedActions" disabled="@(CheckedActionIndices.Count == 0)" title="Delete checked actions">Delete @(CheckedActionIndices.Count > 0 ? CheckedActionIndices.Count.ToString() : "")</button>
+                </div>
+                <div class="editor-toolbar">
+                    <button class="btn btn-xs btn-primary" @onclick="TestPlayEdited" disabled="@IsReplaying">▶ All</button>
+                    <button class="btn btn-xs btn-primary" @onclick="PreviewChecked" disabled="@(IsReplaying || CheckedActionIndices.Count == 0)" title="Preview checked actions only">▶ @(CheckedActionIndices.Count) Checked</button>
+                    <button class="btn btn-xs btn-primary" @onclick="PreviewFromSelected" disabled="@(IsReplaying || SelectedActionIndex < 0)" title="Preview from selected action">▶ From #@(SelectedActionIndex + 1)</button>
                 </div>
                 <div class="editor-actions-list">
                     <div class="action-header">
+                        <span class="col-check">
+                            <input type="checkbox" @onchange="ToggleAllChecked"
+                                   checked="@(CheckedActionIndices.Count == EditingRecording.Actions.Count && EditingRecording.Actions.Count > 0)"
+                                   title="Select all" />
+                        </span>
                         <span class="col-num">#</span>
+                        <span class="col-icon"></span>
                         <span class="col-time">Time</span>
                         <span class="col-gap">Gap</span>
-                        <span class="col-type">Type</span>
-                        <span class="col-element">Element</span>
+                        <span class="col-type">Action</span>
                         <span class="col-controls"></span>
                     </div>
                     @for (int i = 0; i < EditingRecording.Actions.Count; i++)
@@ -544,8 +676,13 @@
                         var action = EditingRecording.Actions[i];
                         var prevTime = i > 0 ? EditingRecording.Actions[i - 1].TimestampMs : 0;
                         var gap = action.TimestampMs - prevTime;
-                        <div class="action-row @(idx == SelectedActionIndex ? "selected" : "")" @onclick="() => SelectAction(idx)">
+                        <div class="action-row @(idx == SelectedActionIndex ? "selected" : "") @(CheckedActionIndices.Contains(idx) ? "checked" : "")" @onclick="() => SelectAction(idx)">
+                            <span class="col-check" @onclick:stopPropagation="true">
+                                <input type="checkbox" checked="@CheckedActionIndices.Contains(idx)"
+                                       @onchange="() => ToggleActionChecked(idx)" />
+                            </span>
                             <span class="col-num">@(i + 1)</span>
+                            <span class="col-icon" title="@(action.ElementType ?? GetActionTypeName(action.Type))">@((MarkupString)GetActionIcon(action))</span>
                             <span class="col-time">
                                 <input type="number" step="0.1" min="0"
                                        value="@(action.TimestampMs / 1000.0)"
@@ -554,10 +691,10 @@
                             </span>
                             <span class="col-gap @(gap > 1000 ? "gap-long" : "")">+@((gap / 1000.0).ToString("F1"))s</span>
                             <span class="col-type">@GetActionTypeName(action.Type)</span>
-                            <span class="col-element">@(action.ElementType ?? "-")</span>
                             <span class="col-controls">
                                 <button class="btn btn-xs btn-outline-secondary" @onclick="() => MoveActionUp(idx)" disabled="@(idx == 0)" title="Move up">↑</button>
                                 <button class="btn btn-xs btn-outline-secondary" @onclick="() => MoveActionDown(idx)" disabled="@(idx == EditingRecording.Actions.Count - 1)" title="Move down">↓</button>
+                                <button class="btn btn-xs btn-outline-primary" @onclick="() => DuplicateAction(idx)" title="Duplicate">⧉</button>
                                 <button class="btn btn-xs btn-outline-danger" @onclick="() => DeleteAction(idx)" title="Delete">×</button>
                             </span>
                         </div>
@@ -999,6 +1136,9 @@
 @inject HttpClient Http
 
 @code {
+    // Build timestamp - set once when assembly loads, not on every render
+    private static readonly string BuildTimestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+
     private ElementReference svgElement;
     private ElementReference containerElement;
     private ElementReference textInputElement;
@@ -1025,6 +1165,10 @@
     private int FontSizeIndex = 1; // 16px default
     private int PolygonSides = 6;
     private int StarPoints = 5;
+    private bool ArcShowArrow = false;
+    private int ArcClickPhase = 0; // 0=waiting for start, 1=waiting for end, 2=waiting for middle
+    private double ArcStartX, ArcStartY, ArcEndX, ArcEndY, ArcMidX, ArcMidY;
+    private double ArcPreviewX, ArcPreviewY; // Mouse position for preview
     private string StrokeColor = "#000000";
     private string FillColor = "#3498db";
     private int CanvasWidth = 1400;
@@ -1082,6 +1226,12 @@
     private Point? ChainStartPoint; // Original start point to close the chain
     private Point? ChainLastPoint;  // Last endpoint to continue from
 
+    // Array mode - create multiple copies when placing a shape
+    private bool ArrayMode = false;
+    private int ArrayCount = 3;
+    private bool ArrayHorizontal = true;
+    private int ArraySpacing = 75;
+
     // AI Drawing state
     private bool ShowAiPanel = false;
     private string ApiKeyInput = "";
@@ -1118,6 +1268,7 @@
     private bool ShowRecordingEditor = false;
     private Recording? EditingRecording = null;
     private int SelectedActionIndex = -1;
+    private HashSet<int> CheckedActionIndices = new();
 
     // Property to set Anthropic key in cascade mode - shares with AiService.ApiKey
     private string CascadeAnthropicKeyInput
@@ -1351,7 +1502,8 @@
         7 => DrawingTool.Polygon,
         8 => DrawingTool.Star,
         9 => DrawingTool.Arrow,
-        10 => DrawingTool.Text,
+        10 => DrawingTool.Arc,
+        11 => DrawingTool.Text,
         _ => DrawingTool.Pencil
     };
 
@@ -1385,6 +1537,9 @@
     {
         if (firstRender)
         {
+            // Focus container for keyboard shortcuts
+            await containerElement.FocusAsync();
+
             await JS.InvokeVoidAsync("setupPasteHandler", DotNetObjectReference.Create(this));
             // Load saved theme
             var savedTheme = await JS.InvokeAsync<string>("localStorage.getItem", "vecsketch-theme");
@@ -1482,6 +1637,14 @@
     }
 
     private string GetFill() => UseFill ? FillColor : "none";
+
+    private string GetArcPreviewPath()
+    {
+        // Calculate bezier control point so curve passes through ArcMidX, ArcMidY
+        var ctrlX = 2 * ArcMidX - 0.5 * ArcStartX - 0.5 * ArcEndX;
+        var ctrlY = 2 * ArcMidY - 0.5 * ArcStartY - 0.5 * ArcEndY;
+        return $"<path d=\"M {ArcStartX:F2} {ArcStartY:F2} Q {ctrlX:F2} {ctrlY:F2} {ArcEndX:F2} {ArcEndY:F2}\" stroke=\"{StrokeColor}\" stroke-width=\"{StrokeWidth}\" fill=\"none\" stroke-dasharray=\"6 4\" opacity=\"0.7\" />";
+    }
 
     private void OnPasteClick() => _ = JS.InvokeVoidAsync("pasteFromClipboard");
     private void OnClearClick() { SaveUndoState(); foreach (var layer in Layers) layer.Elements.Clear(); ClearSelection(); StateHasChanged(); }
@@ -2327,14 +2490,14 @@
     [JSInvokable]
     public void HandlePastedText(string text)
     {
-        TextInputValue = text;
-        TextPosition = new Point(50, 50);
-        ShowTextInput = true;
-        StateHasChanged();
+        // Disabled - do nothing. Text paste was causing unwanted text panel popups.
     }
 
     private async Task OnPointerDown(PointerEventArgs e)
     {
+        // Ensure container has focus for keyboard shortcuts
+        await containerElement.FocusAsync();
+
         // Update SVG scale info in case window was resized
         await UpdateSvgScaleInfo();
 
@@ -2430,6 +2593,8 @@
                     SelectedElements.Remove(hitElement);
                 }
 
+                UpdateSelectionHint();
+
                 // Start moving immediately after selecting
                 if (hitElement.IsSelected)
                 {
@@ -2466,6 +2631,68 @@
             TextInputValue = "";
             ShowTextInput = true;
             return;
+        }
+
+        // Handle arc tool - 3-click mode: Start → End → Middle
+        if (CurrentTool == DrawingTool.Arc)
+        {
+            if (ArcClickPhase == 0)
+            {
+                // First click - start point (use chain point if available)
+                if (ChainMode && ChainLastPoint != null)
+                {
+                    ArcStartX = ChainLastPoint.X;
+                    ArcStartY = ChainLastPoint.Y;
+                }
+                else
+                {
+                    ArcStartX = px;
+                    ArcStartY = py;
+                    if (ChainMode && ChainStartPoint == null)
+                        ChainStartPoint = new Point(ArcStartX, ArcStartY);
+                }
+                ArcClickPhase = 1;
+                InputHint = "Arc: Click END point";
+                StateHasChanged();
+                return;
+            }
+            else if (ArcClickPhase == 1)
+            {
+                // Second click - end point
+                ArcEndX = px;
+                ArcEndY = py;
+                ArcClickPhase = 2;
+                // Set initial mid point to midpoint of line (will update on mouse move)
+                ArcMidX = (ArcStartX + ArcEndX) / 2;
+                ArcMidY = (ArcStartY + ArcEndY) / 2;
+                InputHint = "Arc: Click MIDDLE point (curve bends through here)";
+                StateHasChanged();
+                return;
+            }
+            else if (ArcClickPhase == 2)
+            {
+                // Third click - middle/control point, finalize
+                SaveUndoState();
+                var arc = new ArcElement
+                {
+                    X1 = ArcStartX, Y1 = ArcStartY,
+                    MidX = px, MidY = py,
+                    X2 = ArcEndX, Y2 = ArcEndY,
+                    ShowArrow = ArcShowArrow,
+                    Stroke = StrokeColor, StrokeWidth = StrokeWidth
+                };
+                CurrentLayer.Elements.Add(arc);
+                RecordAction(ActionType.CreateElement, arc);
+
+                // Update chain mode endpoint
+                if (ChainMode)
+                    ChainLastPoint = new Point(arc.X2, arc.Y2);
+
+                ArcClickPhase = 0;
+                InputHint = ChainMode ? "Arc: Click START (chained from end)" : "Arc: Click START point";
+                StateHasChanged();
+                return;
+            }
         }
 
         IsDrawing = true;
@@ -2552,6 +2779,20 @@
     {
         // Transform pointer coordinates from element space to SVG viewBox space
         var (px, py) = TransformToSvgCoords(e.OffsetX, e.OffsetY);
+
+        // Update arc preview position
+        if (CurrentTool == DrawingTool.Arc && ArcClickPhase > 0)
+        {
+            ArcPreviewX = px;
+            ArcPreviewY = py;
+            if (ArcClickPhase == 2)
+            {
+                // Update mid point to follow mouse
+                ArcMidX = px;
+                ArcMidY = py;
+            }
+            StateHasChanged();
+        }
 
         // Handle moving selected elements
         if (IsMoving && DragStart != null)
@@ -2669,12 +2910,17 @@
                 var length = Math.Sqrt(Math.Pow(arrow.X2 - arrow.X1, 2) + Math.Pow(arrow.Y2 - arrow.Y1, 2));
                 arrow.HeadSize = Math.Max(10, Math.Min(25, length * 0.15));
                 break;
+            // Arc uses direct SVG preview, not CurrentElement
         }
     }
 
     private void OnPointerUp(PointerEventArgs e)
     {
-        InputHint = $"{GetPointerType(e)} ready";
+        // Update hint based on selection state, not just "ready"
+        if (SelectedElements.Count > 0)
+            UpdateSelectionHint();
+        else
+            InputHint = $"{GetPointerType(e)} ready";
 
         // Finish moving
         if (IsMoving)
@@ -2755,8 +3001,8 @@
                 }
             }
 
-            InputHint = $"Selected {selectedCount} of {checkedCount} elements in {layerCount} layers (rect: {w:F0}x{h:F0})";
-            _ = JS.InvokeVoidAsync("console.log", $"RESULT: {InputHint}");
+            _ = JS.InvokeVoidAsync("console.log", $"Area select: {selectedCount} of {checkedCount} elements in {layerCount} layers");
+            UpdateSelectionHint();
             IsSelecting = false;
             SelectionStart = null;
             SelectionEnd = null;
@@ -2768,6 +3014,23 @@
             SaveUndoState();
             CurrentLayer.Elements.Add(CurrentElement);
             RecordAction(ActionType.CreateElement, CurrentElement);
+
+            // Array mode: create additional copies
+            if (ArrayMode && ArrayCount > 1)
+            {
+                for (int i = 1; i < ArrayCount; i++)
+                {
+                    var clone = CloneElement(CurrentElement);
+                    if (clone != null)
+                    {
+                        double offsetX = ArrayHorizontal ? i * ArraySpacing : 0;
+                        double offsetY = ArrayHorizontal ? 0 : i * ArraySpacing;
+                        MoveElement(clone, offsetX, offsetY);
+                        CurrentLayer.Elements.Add(clone);
+                        RecordAction(ActionType.CreateElement, clone);
+                    }
+                }
+            }
 
             // Chain mode: continue from endpoint
             if (ChainMode)
@@ -2803,8 +3066,8 @@
         {
             switch (e.Key.ToLower())
             {
-                case "c": CopySelected(); break;
-                case "v": PasteFromClipboard(); break;
+                case "d":
+                case "v": DuplicateSelected(); break; // Ctrl+D or Ctrl+V = duplicate selected
                 case "z": OnUndoClick(); StateHasChanged(); break;
                 case "a": SelectAll(); break; // Ctrl+A = select all
             }
@@ -2824,7 +3087,8 @@
             case "g": CurrentToolIndex = 7; break; // polyGon
             // Star has no shortcut (use toolbar)
             case "a": CurrentToolIndex = 9; break; // Arrow
-            case "x": CurrentToolIndex = 10; break; // teXt
+            case "u": CurrentToolIndex = 10; ArcClickPhase = 0; break; // arcU (curve)
+            case "x": CurrentToolIndex = 11; break; // teXt
             case "k":
                 // Chain mode toggle
                 ChainMode = !ChainMode;
@@ -2844,9 +3108,23 @@
                 DeleteSelected();
                 break;
             case "escape":
-                if (ChainMode)
+                // Cancel arc drawing
+                if (ArcClickPhase > 0)
+                {
+                    ArcClickPhase = 0;
+                    InputHint = "Arc cancelled";
+                }
+                else if (ChainMode)
                 {
                     EndChainMode();
+                }
+                else if (IsDrawing)
+                {
+                    // Cancel current drawing operation
+                    IsDrawing = false;
+                    StartPoint = null;
+                    CurrentElement = null;
+                    InputHint = "Drawing cancelled";
                 }
                 else
                 {
@@ -2859,7 +3137,10 @@
 
     private void SelectAll()
     {
-        ClearSelection();
+        foreach (var el in SelectedElements)
+            el.IsSelected = false;
+        SelectedElements.Clear();
+
         foreach (var layer in Layers.Where(l => l.IsVisible && !l.IsLocked))
         {
             foreach (var el in layer.Elements)
@@ -2868,6 +3149,7 @@
                 SelectedElements.Add(el);
             }
         }
+        UpdateSelectionHint();
     }
 
     private void ClearSelection()
@@ -2875,6 +3157,24 @@
         foreach (var el in SelectedElements)
             el.IsSelected = false;
         SelectedElements.Clear();
+        InputHint = "Selection cleared";
+    }
+
+    private void UpdateSelectionHint()
+    {
+        if (SelectedElements.Count == 0)
+        {
+            InputHint = "Nothing selected";
+            return;
+        }
+
+        // Count elements by type
+        var counts = SelectedElements
+            .GroupBy(el => el.GetType().Name.Replace("Element", "").ToLower())
+            .Select(g => $"{g.Count()} {g.Key}{(g.Count() > 1 ? "s" : "")}")
+            .ToList();
+
+        InputHint = $"Selected: {string.Join(", ", counts)}";
     }
 
     private void DeleteSelected()
@@ -2891,12 +3191,27 @@
         SelectedElements.Clear();
     }
 
+    private void ToggleChainMode()
+    {
+        ChainMode = !ChainMode;
+        if (ChainMode)
+        {
+            ChainStartPoint = null;
+            ChainLastPoint = null;
+            InputHint = "Chain mode ON - click to start, clicks continue from endpoint, click start or ESC to end";
+        }
+        else
+        {
+            EndChainMode();
+        }
+    }
+
     private void EndChainMode()
     {
         ChainMode = false;
         ChainStartPoint = null;
         ChainLastPoint = null;
-        InputHint = "Mouse ready [S=Select, P=Pencil, L=Line, R=Rect, C=Circle, E=Ellipse, T=Triangle, G=Polygon, A=Arrow, X=Text, K=Chain]";
+        InputHint = "Chain mode OFF";
     }
 
     private bool IsNearPoint(double x1, double y1, double x2, double y2, double threshold = 10)
@@ -2910,6 +3225,7 @@
         {
             LineElement line => new Point(line.X2, line.Y2),
             ArrowElement arrow => new Point(arrow.X2, arrow.Y2),
+            ArcElement arc => new Point(arc.X2, arc.Y2),
             PathElement path => path.Points.LastOrDefault(),
             RectElement rect => new Point(rect.X + rect.Width, rect.Y + rect.Height),
             CircleElement circle => new Point(circle.Cx + circle.Radius, circle.Cy),
@@ -3034,7 +3350,88 @@
             case TextElement txt:
                 txt.X += dx; txt.Y += dy;
                 break;
+            case SvgPathElement svgPath:
+                // Translate the SVG path D attribute
+                svgPath.D = TranslateSvgPath(svgPath.D, dx, dy);
+                break;
         }
+    }
+
+    // Translate all coordinates in an SVG path by (dx, dy)
+    // Handles common commands: M, L, H, V, C, S, Q, T, A, Z
+    private string TranslateSvgPath(string d, double dx, double dy)
+    {
+        if (string.IsNullOrEmpty(d)) return d;
+
+        // Use regex to extract commands and numbers
+        var pattern = @"([MLHVCSQTAZmlhvcsqtaz])|(-?[\d.]+)";
+        var matches = System.Text.RegularExpressions.Regex.Matches(d, pattern);
+
+        var result = new System.Text.StringBuilder();
+        char currentCmd = ' ';
+        int numIndex = 0;  // Number index within current command
+
+        foreach (System.Text.RegularExpressions.Match match in matches)
+        {
+            var token = match.Value;
+
+            if (token.Length == 1 && char.IsLetter(token[0]))
+            {
+                // It's a command
+                currentCmd = token[0];
+                numIndex = 0;
+                result.Append(token);
+            }
+            else if (double.TryParse(token, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var num))
+            {
+                // It's a number - decide whether to translate and how to format
+                var translated = num;
+                var upperCmd = char.ToUpper(currentCmd);
+                bool isArcFlag = false;  // Arc flags must be integers (0 or 1)
+
+                switch (upperCmd)
+                {
+                    case 'M': // M x y
+                    case 'L': // L x y
+                    case 'T': // T x y
+                        translated = num + (numIndex % 2 == 0 ? dx : dy);
+                        break;
+                    case 'H': // H x
+                        translated = num + dx;
+                        break;
+                    case 'V': // V y
+                        translated = num + dy;
+                        break;
+                    case 'C': // C x1 y1 x2 y2 x y
+                    case 'S': // S x2 y2 x y
+                    case 'Q': // Q x1 y1 x y
+                        translated = num + (numIndex % 2 == 0 ? dx : dy);
+                        break;
+                    case 'A': // A rx ry rotation large-arc sweep x y
+                        // Indices 3 and 4 are flags (must stay as integers)
+                        // Indices 5 and 6 are x, y (translate these)
+                        var arcIdx = numIndex % 7;
+                        if (arcIdx == 3 || arcIdx == 4)
+                            isArcFlag = true;
+                        else if (arcIdx == 5)
+                            translated = num + dx;
+                        else if (arcIdx == 6)
+                            translated = num + dy;
+                        break;
+                    // Z has no numbers
+                }
+
+                result.Append(" ");
+                if (isArcFlag)
+                    result.Append(((int)translated).ToString());  // Keep flags as integers
+                else
+                    result.Append(translated.ToString("F2", System.Globalization.CultureInfo.InvariantCulture));
+                numIndex++;
+            }
+        }
+
+        return result.ToString();
     }
 
     // Resize element based on handle being dragged
@@ -3121,6 +3518,14 @@
                     newX + (p.X - ob.X) * scaleX,
                     newY + (p.Y - ob.Y) * scaleY
                 )).ToList();
+                break;
+            case ArcElement arc when OriginalElementSnapshot is ArcElement origArc:
+                arc.X1 = newX + (origArc.X1 - ob.X) * scaleX;
+                arc.Y1 = newY + (origArc.Y1 - ob.Y) * scaleY;
+                arc.X2 = newX + (origArc.X2 - ob.X) * scaleX;
+                arc.Y2 = newY + (origArc.Y2 - ob.Y) * scaleY;
+                arc.MidX = newX + (origArc.MidX - ob.X) * scaleX;
+                arc.MidY = newY + (origArc.MidY - ob.Y) * scaleY;
                 break;
             case TextElement txt:
                 txt.X = newX; txt.Y = newY + newH; // Text baseline
@@ -3224,6 +3629,14 @@
                         newX + (p.X - ob.X) * scaleX,
                         newY + (p.Y - ob.Y) * scaleY
                     )).ToList();
+                    break;
+                case ArcElement arc when origEl is ArcElement origArc:
+                    arc.X1 = newX + (origArc.X1 - ob.X) * scaleX;
+                    arc.Y1 = newY + (origArc.Y1 - ob.Y) * scaleY;
+                    arc.X2 = newX + (origArc.X2 - ob.X) * scaleX;
+                    arc.Y2 = newY + (origArc.Y2 - ob.Y) * scaleY;
+                    arc.MidX = newX + (origArc.MidX - ob.X) * scaleX;
+                    arc.MidY = newY + (origArc.MidY - ob.Y) * scaleY;
                     break;
                 case TextElement txt:
                     txt.X = elNewX; txt.Y = elNewY + elNewH;
@@ -3358,6 +3771,160 @@
         }
     }
 
+    // Alignment methods
+    private void AlignLeft()
+    {
+        if (SelectedElements.Count < 2) return;
+        SaveUndoState();
+        var minX = SelectedElements.Min(e => e.GetBounds().X);
+        foreach (var el in SelectedElements)
+        {
+            var bounds = el.GetBounds();
+            var dx = minX - bounds.X;
+            if (Math.Abs(dx) > 0.01) MoveElement(el, dx, 0);
+        }
+        StateHasChanged();
+    }
+
+    private void AlignCenterH()
+    {
+        if (SelectedElements.Count < 2) return;
+        SaveUndoState();
+        var centerX = SelectedElements.Average(e => { var b = e.GetBounds(); return b.X + b.Width / 2; });
+        foreach (var el in SelectedElements)
+        {
+            var bounds = el.GetBounds();
+            var dx = centerX - (bounds.X + bounds.Width / 2);
+            if (Math.Abs(dx) > 0.01) MoveElement(el, dx, 0);
+        }
+        StateHasChanged();
+    }
+
+    private void AlignRight()
+    {
+        if (SelectedElements.Count < 2) return;
+        SaveUndoState();
+        var maxRight = SelectedElements.Max(e => { var b = e.GetBounds(); return b.X + b.Width; });
+        foreach (var el in SelectedElements)
+        {
+            var bounds = el.GetBounds();
+            var dx = maxRight - (bounds.X + bounds.Width);
+            if (Math.Abs(dx) > 0.01) MoveElement(el, dx, 0);
+        }
+        StateHasChanged();
+    }
+
+    private void AlignTop()
+    {
+        if (SelectedElements.Count < 2) return;
+        SaveUndoState();
+        var minY = SelectedElements.Min(e => e.GetBounds().Y);
+        foreach (var el in SelectedElements)
+        {
+            var bounds = el.GetBounds();
+            var dy = minY - bounds.Y;
+            if (Math.Abs(dy) > 0.01) MoveElement(el, 0, dy);
+        }
+        StateHasChanged();
+    }
+
+    private void AlignCenterV()
+    {
+        if (SelectedElements.Count < 2) return;
+        SaveUndoState();
+        var centerY = SelectedElements.Average(e => { var b = e.GetBounds(); return b.Y + b.Height / 2; });
+        foreach (var el in SelectedElements)
+        {
+            var bounds = el.GetBounds();
+            var dy = centerY - (bounds.Y + bounds.Height / 2);
+            if (Math.Abs(dy) > 0.01) MoveElement(el, 0, dy);
+        }
+        StateHasChanged();
+    }
+
+    private void AlignBottom()
+    {
+        if (SelectedElements.Count < 2) return;
+        SaveUndoState();
+        var maxBottom = SelectedElements.Max(e => { var b = e.GetBounds(); return b.Y + b.Height; });
+        foreach (var el in SelectedElements)
+        {
+            var bounds = el.GetBounds();
+            var dy = maxBottom - (bounds.Y + bounds.Height);
+            if (Math.Abs(dy) > 0.01) MoveElement(el, 0, dy);
+        }
+        StateHasChanged();
+    }
+
+    private void DistributeH()
+    {
+        if (SelectedElements.Count < 3) return;
+        SaveUndoState();
+        var sorted = SelectedElements.OrderBy(e => e.GetBounds().X).ToList();
+        var leftmost = sorted.First().GetBounds();
+        var rightmost = sorted.Last().GetBounds();
+        var totalWidth = (rightmost.X + rightmost.Width) - leftmost.X;
+        var elementsWidth = sorted.Sum(e => e.GetBounds().Width);
+        var spacing = (totalWidth - elementsWidth) / (sorted.Count - 1);
+        var currentX = leftmost.X;
+        foreach (var el in sorted)
+        {
+            var bounds = el.GetBounds();
+            var dx = currentX - bounds.X;
+            if (Math.Abs(dx) > 0.01) MoveElement(el, dx, 0);
+            currentX += bounds.Width + spacing;
+        }
+        StateHasChanged();
+    }
+
+    private void DistributeV()
+    {
+        if (SelectedElements.Count < 3) return;
+        SaveUndoState();
+        var sorted = SelectedElements.OrderBy(e => e.GetBounds().Y).ToList();
+        var topmost = sorted.First().GetBounds();
+        var bottommost = sorted.Last().GetBounds();
+        var totalHeight = (bottommost.Y + bottommost.Height) - topmost.Y;
+        var elementsHeight = sorted.Sum(e => e.GetBounds().Height);
+        var spacing = (totalHeight - elementsHeight) / (sorted.Count - 1);
+        var currentY = topmost.Y;
+        foreach (var el in sorted)
+        {
+            var bounds = el.GetBounds();
+            var dy = currentY - bounds.Y;
+            if (Math.Abs(dy) > 0.01) MoveElement(el, 0, dy);
+            currentY += bounds.Height + spacing;
+        }
+        StateHasChanged();
+    }
+
+    private void ArrangeGrid()
+    {
+        if (SelectedElements.Count < 2) return;
+        SaveUndoState();
+        var cols = (int)Math.Ceiling(Math.Sqrt(SelectedElements.Count));
+        var sorted = SelectedElements.OrderBy(e => e.GetBounds().Y).ThenBy(e => e.GetBounds().X).ToList();
+        var maxWidth = sorted.Max(e => e.GetBounds().Width);
+        var maxHeight = sorted.Max(e => e.GetBounds().Height);
+        var startX = sorted.Min(e => e.GetBounds().X);
+        var startY = sorted.Min(e => e.GetBounds().Y);
+        var spacing = 20.0;
+
+        for (int i = 0; i < sorted.Count; i++)
+        {
+            var row = i / cols;
+            var col = i % cols;
+            var targetX = startX + col * (maxWidth + spacing);
+            var targetY = startY + row * (maxHeight + spacing);
+            var bounds = sorted[i].GetBounds();
+            var dx = targetX - bounds.X;
+            var dy = targetY - bounds.Y;
+            if (Math.Abs(dx) > 0.01 || Math.Abs(dy) > 0.01)
+                MoveElement(sorted[i], dx, dy);
+        }
+        StateHasChanged();
+    }
+
     private void DuplicateSelected()
     {
         SaveUndoState();
@@ -3381,13 +3948,18 @@
                 newElements.Add(clone);
             }
         }
-        ClearSelection();
+        // Clear selection without message
+        foreach (var el in SelectedElements)
+            el.IsSelected = false;
+        SelectedElements.Clear();
+
         foreach (var el in newElements)
         {
             CurrentLayer.Elements.Add(el);
             el.IsSelected = true;
             SelectedElements.Add(el);
         }
+        UpdateSelectionHint();
     }
 
     private void GroupSelected()
@@ -3431,6 +4003,67 @@
     private bool HasGroupedSelection()
     {
         return SelectedElements.Any(el => el.GroupId != null);
+    }
+
+    private bool HasDecomposableShapes()
+    {
+        if (SelectedElements.Count < 2) return false;
+        // Must have at least 2 decomposable shapes (circles, ellipses, rects, polygons, triangles, svgpaths)
+        var decomposable = SelectedElements.Where(e =>
+            e is CircleElement || e is EllipseElement ||
+            e is RectElement || e is PolygonElement || e is TriangleElement || e is SvgPathElement).ToList();
+        return decomposable.Count >= 2;
+    }
+
+    private void DecomposeSelected()
+    {
+        var decomposable = SelectedElements.Where(e =>
+            e is CircleElement || e is EllipseElement ||
+            e is RectElement || e is PolygonElement || e is TriangleElement || e is SvgPathElement).ToList();
+
+        if (decomposable.Count < 2) return;
+
+        SaveUndoState();
+
+        var regions = ShapeDecomposer.Decompose(decomposable);
+
+        if (regions.Count == 0)
+        {
+            InputHint = "No overlapping regions found";
+            StateHasChanged();
+            return;
+        }
+
+        // Remove original shapes
+        foreach (var el in decomposable)
+        {
+            el.IsSelected = false;
+            CurrentLayer.Elements.Remove(el);
+        }
+
+        // Clear selection
+        foreach (var el in SelectedElements.ToList())
+        {
+            if (decomposable.Contains(el))
+                SelectedElements.Remove(el);
+        }
+
+        // Add decomposed regions as SvgPathElements
+        foreach (var region in regions)
+        {
+            var pathElement = new SvgPathElement
+            {
+                D = region.PathData,
+                Fill = region.Color,
+                Stroke = "#333333",
+                StrokeWidth = 0.5
+            };
+            CurrentLayer.Elements.Add(pathElement);
+            RecordAction(ActionType.CreateElement, pathElement);
+        }
+
+        InputHint = $"Created {regions.Count} regions";
+        StateHasChanged();
     }
 
     private void SelectGroupMembers(VectorElement element)
@@ -3575,6 +4208,7 @@
             PolygonElement poly => System.Text.Json.JsonSerializer.Serialize(new { Type = "Polygon", poly.Id, poly.Cx, poly.Cy, poly.Radius, poly.Sides, poly.Stroke, poly.StrokeWidth, poly.Fill, poly.GroupId }, options),
             StarElement star => System.Text.Json.JsonSerializer.Serialize(new { Type = "Star", star.Id, star.Cx, star.Cy, star.OuterRadius, star.InnerRadius, star.Points, star.Stroke, star.StrokeWidth, star.Fill, star.GroupId }, options),
             ArrowElement arrow => System.Text.Json.JsonSerializer.Serialize(new { Type = "Arrow", arrow.Id, arrow.X1, arrow.Y1, arrow.X2, arrow.Y2, arrow.HeadSize, arrow.Stroke, arrow.StrokeWidth, arrow.Fill, arrow.GroupId }, options),
+            ArcElement arc => System.Text.Json.JsonSerializer.Serialize(new { Type = "Arc", arc.Id, arc.X1, arc.Y1, arc.MidX, arc.MidY, arc.X2, arc.Y2, arc.ShowArrow, arc.HeadSize, arc.Stroke, arc.StrokeWidth, arc.Fill, arc.GroupId }, options),
             SvgPathElement svgPath => System.Text.Json.JsonSerializer.Serialize(new { Type = "SvgPath", svgPath.Id, svgPath.D, svgPath.Stroke, svgPath.StrokeWidth, svgPath.Fill, svgPath.GroupId }, options),
             _ => "{}"
         };
@@ -3835,6 +4469,22 @@
                     Fill = root.GetProperty("Fill").GetString() ?? "none",
                     GroupId = root.TryGetProperty("GroupId", out var gid9) ? gid9.GetString() : null
                 },
+                "Arc" => new ArcElement
+                {
+                    Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
+                    X1 = root.GetProperty("X1").GetDouble(),
+                    Y1 = root.GetProperty("Y1").GetDouble(),
+                    MidX = root.GetProperty("MidX").GetDouble(),
+                    MidY = root.GetProperty("MidY").GetDouble(),
+                    X2 = root.GetProperty("X2").GetDouble(),
+                    Y2 = root.GetProperty("Y2").GetDouble(),
+                    ShowArrow = root.TryGetProperty("ShowArrow", out var sa) && sa.GetBoolean(),
+                    HeadSize = root.TryGetProperty("HeadSize", out var ahs) ? ahs.GetDouble() : 12,
+                    Stroke = root.GetProperty("Stroke").GetString() ?? "#000000",
+                    StrokeWidth = root.GetProperty("StrokeWidth").GetDouble(),
+                    Fill = root.GetProperty("Fill").GetString() ?? "none",
+                    GroupId = root.TryGetProperty("GroupId", out var gid9a) ? gid9a.GetString() : null
+                },
                 "SvgPath" => new SvgPathElement
                 {
                     Id = root.GetProperty("Id").GetString() ?? Guid.NewGuid().ToString(),
@@ -3963,6 +4613,7 @@
         var json = System.Text.Json.JsonSerializer.Serialize(recording);
         EditingRecording = System.Text.Json.JsonSerializer.Deserialize<Recording>(json);
         SelectedActionIndex = -1;
+        CheckedActionIndices.Clear();
         ShowRecordingEditor = true;
         StateHasChanged();
     }
@@ -3972,12 +4623,39 @@
         ShowRecordingEditor = false;
         EditingRecording = null;
         SelectedActionIndex = -1;
+        CheckedActionIndices.Clear();
         StateHasChanged();
     }
 
     private void SelectAction(int index)
     {
         SelectedActionIndex = index;
+        StateHasChanged();
+    }
+
+    private void ToggleActionChecked(int index)
+    {
+        if (CheckedActionIndices.Contains(index))
+            CheckedActionIndices.Remove(index);
+        else
+            CheckedActionIndices.Add(index);
+        StateHasChanged();
+    }
+
+    private void ToggleAllChecked()
+    {
+        if (EditingRecording == null) return;
+
+        if (CheckedActionIndices.Count == EditingRecording.Actions.Count)
+        {
+            // All checked, uncheck all
+            CheckedActionIndices.Clear();
+        }
+        else
+        {
+            // Not all checked, check all
+            CheckedActionIndices = Enumerable.Range(0, EditingRecording.Actions.Count).ToHashSet();
+        }
         StateHasChanged();
     }
 
@@ -4000,6 +4678,54 @@
             ActionType.SetCanvasFill => "Canvas Fill",
             ActionType.Clear => "Clear",
             _ => type.ToString()
+        };
+    }
+
+    private string GetActionIcon(RecordedAction action)
+    {
+        const string svgStart = "<svg viewBox=\"0 0 16 16\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\">";
+        const string svgEnd = "</svg>";
+
+        // For element creation, show element type icon (class names end with "Element")
+        if (action.Type == ActionType.CreateElement && !string.IsNullOrEmpty(action.ElementType))
+        {
+            return action.ElementType switch
+            {
+                "RectElement" => $"{svgStart}<rect x=\"2\" y=\"3\" width=\"12\" height=\"10\" rx=\"1\"/>{svgEnd}",
+                "CircleElement" => $"{svgStart}<circle cx=\"8\" cy=\"8\" r=\"6\"/>{svgEnd}",
+                "EllipseElement" => $"{svgStart}<ellipse cx=\"8\" cy=\"8\" rx=\"6\" ry=\"4\"/>{svgEnd}",
+                "LineElement" => $"{svgStart}<line x1=\"2\" y1=\"14\" x2=\"14\" y2=\"2\"/>{svgEnd}",
+                "PathElement" => $"{svgStart}<path d=\"M2 12 Q5 4 8 8 T14 4\"/>{svgEnd}",
+                "TriangleElement" => $"{svgStart}<polygon points=\"8,2 14,14 2,14\"/>{svgEnd}",
+                "PolygonElement" => $"{svgStart}<polygon points=\"8,1 11,5 15,6 12,10 13,15 8,12 3,15 4,10 1,6 5,5\"/>{svgEnd}",
+                "StarElement" => $"{svgStart}<polygon points=\"8,1 10,6 15,6 11,10 13,15 8,12 3,15 5,10 1,6 6,6\"/>{svgEnd}",
+                "ArrowElement" => $"{svgStart}<line x1=\"2\" y1=\"8\" x2=\"12\" y2=\"8\"/><polyline points=\"9,5 12,8 9,11\"/>{svgEnd}",
+                "ArcElement" => $"{svgStart}<path d=\"M2 12 Q8 2 14 12\"/>{svgEnd}",
+                "TextElement" => $"{svgStart}<text x=\"4\" y=\"12\" font-size=\"10\" fill=\"currentColor\" stroke=\"none\">T</text>{svgEnd}",
+                "ImageElement" => $"{svgStart}<rect x=\"2\" y=\"3\" width=\"12\" height=\"10\" rx=\"1\"/><circle cx=\"5\" cy=\"6\" r=\"1.5\" fill=\"currentColor\"/><polyline points=\"2,11 6,8 9,10 14,6\"/>{svgEnd}",
+                "SvgPathElement" => $"{svgStart}<path d=\"M3 8 C3 4, 8 2, 8 8 S13 12, 13 8\"/>{svgEnd}",
+                _ => $"{svgStart}<rect x=\"3\" y=\"3\" width=\"10\" height=\"10\"/>{svgEnd}"
+            };
+        }
+
+        // For other action types, show action icon
+        return action.Type switch
+        {
+            ActionType.CreateElement => $"{svgStart}<line x1=\"8\" y1=\"3\" x2=\"8\" y2=\"13\"/><line x1=\"3\" y1=\"8\" x2=\"13\" y2=\"8\"/>{svgEnd}", // Plus icon for old recordings without ElementType
+            ActionType.MoveElement => $"{svgStart}<path d=\"M8 2v12M2 8h12\"/><polyline points=\"5,5 8,2 11,5\"/><polyline points=\"5,11 8,14 11,11\"/><polyline points=\"5,5 2,8 5,11\"/><polyline points=\"11,5 14,8 11,11\"/>{svgEnd}",
+            ActionType.DeleteElement => $"{svgStart}<line x1=\"4\" y1=\"4\" x2=\"12\" y2=\"12\"/><line x1=\"12\" y1=\"4\" x2=\"4\" y2=\"12\"/>{svgEnd}",
+            ActionType.ModifyElement => $"{svgStart}<path d=\"M11 2l3 3-9 9H2v-3l9-9z\"/>{svgEnd}",
+            ActionType.SelectElement => $"{svgStart}<rect x=\"3\" y=\"3\" width=\"10\" height=\"10\" stroke-dasharray=\"2\"/><circle cx=\"3\" cy=\"3\" r=\"1.5\" fill=\"currentColor\"/><circle cx=\"13\" cy=\"3\" r=\"1.5\" fill=\"currentColor\"/><circle cx=\"3\" cy=\"13\" r=\"1.5\" fill=\"currentColor\"/><circle cx=\"13\" cy=\"13\" r=\"1.5\" fill=\"currentColor\"/>{svgEnd}",
+            ActionType.DeselectElement => $"{svgStart}<rect x=\"3\" y=\"3\" width=\"10\" height=\"10\" stroke-dasharray=\"2\" opacity=\"0.5\"/>{svgEnd}",
+            ActionType.GroupElements => $"{svgStart}<rect x=\"1\" y=\"1\" width=\"6\" height=\"6\" rx=\"1\"/><rect x=\"9\" y=\"9\" width=\"6\" height=\"6\" rx=\"1\"/><path d=\"M7 4h2M12 7v2\" stroke-dasharray=\"1\"/>{svgEnd}",
+            ActionType.UngroupElements => $"{svgStart}<rect x=\"1\" y=\"1\" width=\"6\" height=\"6\" rx=\"1\"/><rect x=\"9\" y=\"9\" width=\"6\" height=\"6\" rx=\"1\"/>{svgEnd}",
+            ActionType.AddLayer => $"{svgStart}<rect x=\"2\" y=\"6\" width=\"8\" height=\"6\" rx=\"1\"/><rect x=\"6\" y=\"4\" width=\"8\" height=\"6\" rx=\"1\"/><line x1=\"10\" y1=\"1\" x2=\"10\" y2=\"4\"/><line x1=\"8\" y1=\"2.5\" x2=\"12\" y2=\"2.5\"/>{svgEnd}",
+            ActionType.DeleteLayer => $"{svgStart}<rect x=\"2\" y=\"6\" width=\"8\" height=\"6\" rx=\"1\"/><rect x=\"6\" y=\"4\" width=\"8\" height=\"6\" rx=\"1\" stroke-dasharray=\"2\"/>{svgEnd}",
+            ActionType.SelectLayer => $"{svgStart}<rect x=\"3\" y=\"5\" width=\"10\" height=\"7\" rx=\"1\"/><line x1=\"3\" y1=\"8\" x2=\"13\" y2=\"8\"/>{svgEnd}",
+            ActionType.SetCanvasSize => $"{svgStart}<rect x=\"2\" y=\"2\" width=\"12\" height=\"12\" rx=\"1\" stroke-dasharray=\"2\"/><path d=\"M10 6h4v4\" fill=\"none\"/>{svgEnd}",
+            ActionType.SetCanvasFill => $"{svgStart}<rect x=\"2\" y=\"2\" width=\"12\" height=\"12\" rx=\"1\" fill=\"currentColor\" opacity=\"0.3\"/>{svgEnd}",
+            ActionType.Clear => $"{svgStart}<rect x=\"2\" y=\"2\" width=\"12\" height=\"12\" rx=\"1\"/><line x1=\"5\" y1=\"5\" x2=\"11\" y2=\"11\"/><line x1=\"11\" y1=\"5\" x2=\"5\" y2=\"11\"/>{svgEnd}",
+            _ => $"{svgStart}<circle cx=\"8\" cy=\"8\" r=\"2\" fill=\"currentColor\"/>{svgEnd}"
         };
     }
 
@@ -4055,24 +4781,60 @@
     private void NormalizeGaps()
     {
         if (EditingRecording == null || EditingRecording.Actions.Count == 0) return;
-        var totalDuration = EditingRecording.DurationMs;
-        var avgGap = totalDuration / Math.Max(EditingRecording.Actions.Count, 1);
-        // Use a minimum gap of 200ms, max of 500ms
-        var gap = Math.Clamp(avgGap, 200, 500);
-        for (int i = 0; i < EditingRecording.Actions.Count; i++)
+
+        // If checked actions, normalize gaps between them
+        if (CheckedActionIndices.Count > 1)
         {
-            EditingRecording.Actions[i].TimestampMs = i * gap;
+            var checkedIndices = CheckedActionIndices.OrderBy(i => i).ToList();
+            var firstTime = EditingRecording.Actions[checkedIndices[0]].TimestampMs;
+            var lastTime = EditingRecording.Actions[checkedIndices[^1]].TimestampMs;
+            var totalSpan = lastTime - firstTime;
+            var gap = totalSpan / (checkedIndices.Count - 1);
+            gap = Math.Clamp(gap, 200, 500);
+
+            for (int i = 0; i < checkedIndices.Count; i++)
+            {
+                EditingRecording.Actions[checkedIndices[i]].TimestampMs = firstTime + (i * gap);
+            }
         }
+        else
+        {
+            // Apply to all
+            var totalDuration = EditingRecording.DurationMs;
+            var avgGap = totalDuration / Math.Max(EditingRecording.Actions.Count, 1);
+            var gap = Math.Clamp(avgGap, 200, 500);
+            for (int i = 0; i < EditingRecording.Actions.Count; i++)
+            {
+                EditingRecording.Actions[i].TimestampMs = i * gap;
+            }
+        }
+
+        // Re-sort and clear selection
+        EditingRecording.Actions = EditingRecording.Actions.OrderBy(a => a.TimestampMs).ToList();
+        CheckedActionIndices.Clear();
         StateHasChanged();
     }
 
     private void ScaleTiming(double factor)
     {
         if (EditingRecording == null) return;
-        foreach (var action in EditingRecording.Actions)
+
+        // If no actions are checked, apply to all
+        var indicesToScale = CheckedActionIndices.Count > 0
+            ? CheckedActionIndices
+            : Enumerable.Range(0, EditingRecording.Actions.Count).ToHashSet();
+
+        foreach (var idx in indicesToScale)
         {
-            action.TimestampMs = (long)(action.TimestampMs * factor);
+            if (idx >= 0 && idx < EditingRecording.Actions.Count)
+            {
+                EditingRecording.Actions[idx].TimestampMs = (long)(EditingRecording.Actions[idx].TimestampMs * factor);
+            }
         }
+        // Re-sort by timestamp after scaling
+        EditingRecording.Actions = EditingRecording.Actions.OrderBy(a => a.TimestampMs).ToList();
+        // Clear checked indices since order may have changed
+        CheckedActionIndices.Clear();
         StateHasChanged();
     }
 
@@ -4099,6 +4861,184 @@
         }
 
         CloseRecordingEditor();
+    }
+
+    private void DuplicateAction(int index)
+    {
+        if (EditingRecording == null || index < 0 || index >= EditingRecording.Actions.Count) return;
+
+        var original = EditingRecording.Actions[index];
+        var json = System.Text.Json.JsonSerializer.Serialize(original);
+        var duplicate = System.Text.Json.JsonSerializer.Deserialize<RecordedAction>(json);
+        if (duplicate != null)
+        {
+            // Generate new element ID if it's a create action
+            if (duplicate.Type == ActionType.CreateElement && !string.IsNullOrEmpty(duplicate.ElementId))
+            {
+                duplicate.ElementId = Guid.NewGuid().ToString();
+                // Update the ID in the ElementJson as well
+                if (!string.IsNullOrEmpty(duplicate.ElementJson))
+                {
+                    duplicate.ElementJson = duplicate.ElementJson.Replace(original.ElementId!, duplicate.ElementId);
+                }
+            }
+            // Insert after original with 100ms offset
+            duplicate.TimestampMs = original.TimestampMs + 100;
+            EditingRecording.Actions.Insert(index + 1, duplicate);
+            // Re-sort by timestamp
+            EditingRecording.Actions = EditingRecording.Actions.OrderBy(a => a.TimestampMs).ToList();
+            SelectedActionIndex = EditingRecording.Actions.IndexOf(duplicate);
+            StateHasChanged();
+        }
+    }
+
+    private void ReverseActions()
+    {
+        if (EditingRecording == null || EditingRecording.Actions.Count < 2) return;
+
+        if (CheckedActionIndices.Count >= 2)
+        {
+            // Reverse only checked actions - swap their timestamps
+            var checkedIndices = CheckedActionIndices.OrderBy(i => i).ToList();
+            var checkedTimestamps = checkedIndices.Select(i => EditingRecording.Actions[i].TimestampMs).ToList();
+
+            // Assign timestamps in reverse order to checked actions
+            for (int i = 0; i < checkedIndices.Count; i++)
+            {
+                EditingRecording.Actions[checkedIndices[i]].TimestampMs = checkedTimestamps[checkedIndices.Count - 1 - i];
+            }
+
+            // Re-sort by timestamp
+            EditingRecording.Actions = EditingRecording.Actions.OrderBy(a => a.TimestampMs).ToList();
+            CheckedActionIndices.Clear();
+        }
+        else
+        {
+            // Reverse all actions
+            var timestamps = EditingRecording.Actions.Select(a => a.TimestampMs).ToList();
+            EditingRecording.Actions.Reverse();
+            for (int i = 0; i < EditingRecording.Actions.Count; i++)
+            {
+                EditingRecording.Actions[i].TimestampMs = timestamps[i];
+            }
+        }
+
+        SelectedActionIndex = -1;
+        StateHasChanged();
+    }
+
+    private void AddDelayAction()
+    {
+        if (EditingRecording == null) return;
+
+        // Determine where to insert delay
+        var insertIndex = SelectedActionIndex >= 0 ? SelectedActionIndex : EditingRecording.Actions.Count - 1;
+        if (insertIndex < 0) insertIndex = 0;
+
+        var insertTime = insertIndex < EditingRecording.Actions.Count
+            ? EditingRecording.Actions[insertIndex].TimestampMs
+            : EditingRecording.DurationMs;
+
+        // Shift all subsequent actions by 1000ms (1 second delay)
+        for (int i = insertIndex + 1; i < EditingRecording.Actions.Count; i++)
+        {
+            EditingRecording.Actions[i].TimestampMs += 1000;
+        }
+
+        StateHasChanged();
+    }
+
+    private void ClearAllActions()
+    {
+        if (EditingRecording == null) return;
+        EditingRecording.Actions.Clear();
+        SelectedActionIndex = -1;
+        CheckedActionIndices.Clear();
+        StateHasChanged();
+    }
+
+    private void DeleteCheckedActions()
+    {
+        if (EditingRecording == null || CheckedActionIndices.Count == 0) return;
+
+        // Remove in reverse order to maintain indices
+        foreach (var idx in CheckedActionIndices.OrderByDescending(i => i))
+        {
+            if (idx >= 0 && idx < EditingRecording.Actions.Count)
+            {
+                EditingRecording.Actions.RemoveAt(idx);
+            }
+        }
+        CheckedActionIndices.Clear();
+        SelectedActionIndex = -1;
+        StateHasChanged();
+    }
+
+    private async Task PreviewChecked()
+    {
+        if (EditingRecording == null || IsReplaying || CheckedActionIndices.Count == 0) return;
+
+        // Create a temporary recording with only checked actions
+        var tempRecording = new Recording
+        {
+            Id = EditingRecording.Id,
+            Name = EditingRecording.Name,
+            CanvasWidth = EditingRecording.CanvasWidth,
+            CanvasHeight = EditingRecording.CanvasHeight,
+            CanvasFill = EditingRecording.CanvasFill,
+            Actions = new List<RecordedAction>()
+        };
+
+        var checkedIndices = CheckedActionIndices.OrderBy(i => i).ToList();
+        var startTime = EditingRecording.Actions[checkedIndices[0]].TimestampMs;
+
+        foreach (var idx in checkedIndices)
+        {
+            if (idx >= 0 && idx < EditingRecording.Actions.Count)
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(EditingRecording.Actions[idx]);
+                var action = System.Text.Json.JsonSerializer.Deserialize<RecordedAction>(json);
+                if (action != null)
+                {
+                    action.TimestampMs = EditingRecording.Actions[idx].TimestampMs - startTime;
+                    tempRecording.Actions.Add(action);
+                }
+            }
+        }
+
+        await StartReplay(tempRecording);
+    }
+
+    private async Task PreviewFromSelected()
+    {
+        if (EditingRecording == null || IsReplaying || SelectedActionIndex < 0) return;
+
+        // Create a temporary recording with only actions from selected index onward
+        var tempRecording = new Recording
+        {
+            Id = EditingRecording.Id,
+            Name = EditingRecording.Name,
+            CanvasWidth = EditingRecording.CanvasWidth,
+            CanvasHeight = EditingRecording.CanvasHeight,
+            CanvasFill = EditingRecording.CanvasFill,
+            Actions = new List<RecordedAction>()
+        };
+
+        // Calculate time offset (start from 0)
+        var startTime = EditingRecording.Actions[SelectedActionIndex].TimestampMs;
+
+        for (int i = SelectedActionIndex; i < EditingRecording.Actions.Count; i++)
+        {
+            var json = System.Text.Json.JsonSerializer.Serialize(EditingRecording.Actions[i]);
+            var action = System.Text.Json.JsonSerializer.Deserialize<RecordedAction>(json);
+            if (action != null)
+            {
+                action.TimestampMs = EditingRecording.Actions[i].TimestampMs - startTime;
+                tempRecording.Actions.Add(action);
+            }
+        }
+
+        await StartReplay(tempRecording);
     }
 
     private void CopySelected()
@@ -4263,6 +5203,49 @@
     {
         if (index >= 0 && index < Layers.Count)
             CurrentLayerIndex = index;
+    }
+
+    private bool AreAllLayerElementsSelected(int layerIndex)
+    {
+        if (layerIndex < 0 || layerIndex >= Layers.Count) return false;
+        var layer = Layers[layerIndex];
+        if (layer.Elements.Count == 0) return false;
+        return layer.Elements.All(el => el.IsSelected);
+    }
+
+    private void ToggleSelectAllOnLayer(int layerIndex, bool selectAll)
+    {
+        if (layerIndex < 0 || layerIndex >= Layers.Count) return;
+        var layer = Layers[layerIndex];
+
+        if (selectAll)
+        {
+            // Select all elements on this layer
+            foreach (var el in layer.Elements)
+            {
+                if (!el.IsSelected)
+                {
+                    el.IsSelected = true;
+                    SelectedElements.Add(el);
+                }
+            }
+            InputHint = $"Selected all {layer.Elements.Count} element(s) on {layer.Name}";
+        }
+        else
+        {
+            // Deselect all elements on this layer
+            foreach (var el in layer.Elements)
+            {
+                if (el.IsSelected)
+                {
+                    el.IsSelected = false;
+                    SelectedElements.Remove(el);
+                }
+            }
+            InputHint = $"Deselected all elements on {layer.Name}";
+        }
+        UpdateSelectionHint();
+        StateHasChanged();
     }
 
     private void ToggleLayerVisibility(int index)

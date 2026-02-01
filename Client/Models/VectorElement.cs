@@ -40,6 +40,21 @@ public class LineElement : VectorElement
     public override BoundingBox GetBounds() => new(Math.Min(X1, X2), Math.Min(Y1, Y2), Math.Abs(X2 - X1), Math.Abs(Y2 - Y1));
     public override string ToSvg() =>
         $"<line x1=\"{X1}\" y1=\"{Y1}\" x2=\"{X2}\" y2=\"{Y2}\" stroke=\"{(IsSelected ? "#0066ff" : Stroke)}\" stroke-width=\"{StrokeWidth}\"{GetSelectionStyle()} />";
+
+    public override bool HitTest(double x, double y, double tolerance = 5)
+    {
+        // Distance from point to line segment
+        var dx = X2 - X1;
+        var dy = Y2 - Y1;
+        var len2 = dx * dx + dy * dy;
+        if (len2 == 0) return Math.Sqrt((x - X1) * (x - X1) + (y - Y1) * (y - Y1)) <= tolerance + StrokeWidth / 2;
+
+        var t = Math.Max(0, Math.Min(1, ((x - X1) * dx + (y - Y1) * dy) / len2));
+        var projX = X1 + t * dx;
+        var projY = Y1 + t * dy;
+        var dist = Math.Sqrt((x - projX) * (x - projX) + (y - projY) * (y - projY));
+        return dist <= tolerance + StrokeWidth / 2;
+    }
 }
 
 public class PathElement : VectorElement
@@ -77,6 +92,20 @@ public class RectElement : VectorElement
     public override BoundingBox GetBounds() => new(X, Y, Width, Height);
     public override string ToSvg() =>
         $"<rect x=\"{X}\" y=\"{Y}\" width=\"{Width}\" height=\"{Height}\" stroke=\"{(IsSelected ? "#0066ff" : Stroke)}\" stroke-width=\"{StrokeWidth}\" fill=\"{Fill}\"{GetSelectionStyle()} />";
+
+    public override bool HitTest(double px, double py, double tolerance = 5)
+    {
+        var halfStroke = StrokeWidth / 2;
+        // Check if inside the filled area (if filled)
+        if (Fill != "none" && px >= X && px <= X + Width && py >= Y && py <= Y + Height)
+            return true;
+        // Check if on the stroke
+        var nearLeft = Math.Abs(px - X) <= tolerance + halfStroke && py >= Y - tolerance && py <= Y + Height + tolerance;
+        var nearRight = Math.Abs(px - (X + Width)) <= tolerance + halfStroke && py >= Y - tolerance && py <= Y + Height + tolerance;
+        var nearTop = Math.Abs(py - Y) <= tolerance + halfStroke && px >= X - tolerance && px <= X + Width + tolerance;
+        var nearBottom = Math.Abs(py - (Y + Height)) <= tolerance + halfStroke && px >= X - tolerance && px <= X + Width + tolerance;
+        return nearLeft || nearRight || nearTop || nearBottom;
+    }
 }
 
 public class CircleElement : VectorElement
@@ -88,6 +117,18 @@ public class CircleElement : VectorElement
     public override BoundingBox GetBounds() => new(Cx - Radius, Cy - Radius, Radius * 2, Radius * 2);
     public override string ToSvg() =>
         $"<circle cx=\"{Cx}\" cy=\"{Cy}\" r=\"{Radius}\" stroke=\"{(IsSelected ? "#0066ff" : Stroke)}\" stroke-width=\"{StrokeWidth}\" fill=\"{Fill}\"{GetSelectionStyle()} />";
+
+    public override bool HitTest(double x, double y, double tolerance = 5)
+    {
+        var dx = x - Cx;
+        var dy = y - Cy;
+        var dist = Math.Sqrt(dx * dx + dy * dy);
+        // Inside filled area
+        if (Fill != "none" && dist <= Radius)
+            return true;
+        // On the stroke
+        return Math.Abs(dist - Radius) <= tolerance + StrokeWidth / 2;
+    }
 }
 
 public class EllipseElement : VectorElement
@@ -100,6 +141,21 @@ public class EllipseElement : VectorElement
     public override BoundingBox GetBounds() => new(Cx - Rx, Cy - Ry, Rx * 2, Ry * 2);
     public override string ToSvg() =>
         $"<ellipse cx=\"{Cx}\" cy=\"{Cy}\" rx=\"{Rx}\" ry=\"{Ry}\" stroke=\"{(IsSelected ? "#0066ff" : Stroke)}\" stroke-width=\"{StrokeWidth}\" fill=\"{Fill}\"{GetSelectionStyle()} />";
+
+    public override bool HitTest(double x, double y, double tolerance = 5)
+    {
+        // Normalized distance from center (1.0 = on ellipse boundary)
+        var dx = (x - Cx) / Rx;
+        var dy = (y - Cy) / Ry;
+        var normalizedDist = dx * dx + dy * dy;
+        // Inside filled area
+        if (Fill != "none" && normalizedDist <= 1.0)
+            return true;
+        // On the stroke (approximate)
+        var avgRadius = (Rx + Ry) / 2;
+        var strokeTolerance = (tolerance + StrokeWidth / 2) / avgRadius;
+        return Math.Abs(Math.Sqrt(normalizedDist) - 1.0) <= strokeTolerance;
+    }
 }
 
 public class TriangleElement : VectorElement
@@ -121,6 +177,40 @@ public class TriangleElement : VectorElement
     }
     public override string ToSvg() =>
         $"<polygon points=\"{X1},{Y1} {X2},{Y2} {X3},{Y3}\" stroke=\"{(IsSelected ? "#0066ff" : Stroke)}\" stroke-width=\"{StrokeWidth}\" fill=\"{Fill}\"{GetSelectionStyle()} />";
+
+    public override bool HitTest(double px, double py, double tolerance = 5)
+    {
+        // Point in triangle test using barycentric coordinates
+        double Sign(double p1x, double p1y, double p2x, double p2y, double p3x, double p3y) =>
+            (p1x - p3x) * (p2y - p3y) - (p2x - p3x) * (p1y - p3y);
+
+        var d1 = Sign(px, py, X1, Y1, X2, Y2);
+        var d2 = Sign(px, py, X2, Y2, X3, Y3);
+        var d3 = Sign(px, py, X3, Y3, X1, Y1);
+
+        var hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+        var hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+
+        var inside = !(hasNeg && hasPos);
+        if (Fill != "none" && inside)
+            return true;
+
+        // Check if near any edge
+        bool NearLine(double lx1, double ly1, double lx2, double ly2)
+        {
+            var dx = lx2 - lx1;
+            var dy = ly2 - ly1;
+            var len2 = dx * dx + dy * dy;
+            if (len2 == 0) return false;
+            var t = Math.Max(0, Math.Min(1, ((px - lx1) * dx + (py - ly1) * dy) / len2));
+            var projX = lx1 + t * dx;
+            var projY = ly1 + t * dy;
+            var dist = Math.Sqrt((px - projX) * (px - projX) + (py - projY) * (py - projY));
+            return dist <= tolerance + StrokeWidth / 2;
+        }
+
+        return NearLine(X1, Y1, X2, Y2) || NearLine(X2, Y2, X3, Y3) || NearLine(X3, Y3, X1, Y1);
+    }
 }
 
 public class PolygonElement : VectorElement
@@ -142,6 +232,19 @@ public class PolygonElement : VectorElement
             points.Add($"{x:F2},{y:F2}");
         }
         return $"<polygon points=\"{string.Join(" ", points)}\" stroke=\"{(IsSelected ? "#0066ff" : Stroke)}\" stroke-width=\"{StrokeWidth}\" fill=\"{Fill}\"{GetSelectionStyle()} />";
+    }
+
+    public override bool HitTest(double x, double y, double tolerance = 5)
+    {
+        var dx = x - Cx;
+        var dy = y - Cy;
+        var dist = Math.Sqrt(dx * dx + dy * dy);
+        // Approximate: inner radius of regular polygon
+        var innerRadius = Radius * Math.Cos(Math.PI / Sides);
+        if (Fill != "none" && dist <= innerRadius)
+            return true;
+        // On or near the boundary
+        return dist <= Radius + tolerance + StrokeWidth / 2 && dist >= innerRadius - tolerance - StrokeWidth / 2;
     }
 }
 
@@ -198,6 +301,60 @@ public class ArrowElement : VectorElement
     }
 }
 
+public class ArcElement : VectorElement
+{
+    public double X1 { get; set; }  // Start point
+    public double Y1 { get; set; }
+    public double MidX { get; set; } // Control point (arc passes through this)
+    public double MidY { get; set; }
+    public double X2 { get; set; }  // End point
+    public double Y2 { get; set; }
+    public bool ShowArrow { get; set; } = false;
+    public double HeadSize { get; set; } = 12;
+
+    public override BoundingBox GetBounds()
+    {
+        var minX = Math.Min(Math.Min(X1, X2), MidX) - HeadSize;
+        var minY = Math.Min(Math.Min(Y1, Y2), MidY) - HeadSize;
+        var maxX = Math.Max(Math.Max(X1, X2), MidX) + HeadSize;
+        var maxY = Math.Max(Math.Max(Y1, Y2), MidY) + HeadSize;
+        return new(minX, minY, maxX - minX, maxY - minY);
+    }
+
+    public override string ToSvg()
+    {
+        var stroke = IsSelected ? "#0066ff" : Stroke;
+
+        // Convert 3-point arc to quadratic bezier control point
+        // The control point for Q bezier is calculated so curve passes through MidX,MidY
+        var ctrlX = 2 * MidX - 0.5 * X1 - 0.5 * X2;
+        var ctrlY = 2 * MidY - 0.5 * Y1 - 0.5 * Y2;
+
+        var path = $"M {X1:F2} {Y1:F2} Q {ctrlX:F2} {ctrlY:F2} {X2:F2} {Y2:F2}";
+
+        if (!ShowArrow)
+        {
+            return $"<path d=\"{path}\" stroke=\"{stroke}\" stroke-width=\"{StrokeWidth}\" fill=\"none\"{GetSelectionStyle()} />";
+        }
+
+        // Calculate arrow head at end point
+        // Direction at end of quadratic bezier: tangent from control point to end point
+        var angle = Math.Atan2(Y2 - ctrlY, X2 - ctrlX);
+        var headAngle1 = angle + Math.PI * 0.85;
+        var headAngle2 = angle - Math.PI * 0.85;
+
+        var headX1 = X2 + HeadSize * Math.Cos(headAngle1);
+        var headY1 = Y2 + HeadSize * Math.Sin(headAngle1);
+        var headX2 = X2 + HeadSize * Math.Cos(headAngle2);
+        var headY2 = Y2 + HeadSize * Math.Sin(headAngle2);
+
+        return $@"<g{GetSelectionStyle()}>
+            <path d=""{path}"" stroke=""{stroke}"" stroke-width=""{StrokeWidth}"" fill=""none"" />
+            <polygon points=""{X2:F2},{Y2:F2} {headX1:F2},{headY1:F2} {headX2:F2},{headY2:F2}"" fill=""{stroke}"" stroke=""{stroke}"" stroke-width=""1"" />
+        </g>";
+    }
+}
+
 public class ImageElement : VectorElement
 {
     public double X { get; set; }
@@ -234,12 +391,7 @@ public class SvgPathElement : VectorElement
 {
     public string D { get; set; } = string.Empty;
 
-    public override BoundingBox GetBounds()
-    {
-        // Parse path data to find bounds (simplified - handles M, L, C commands)
-        var bounds = ParsePathBounds(D);
-        return bounds;
-    }
+    public override BoundingBox GetBounds() => ParsePathBounds(D);
 
     public override string ToSvg() =>
         $"<path d=\"{D}\" stroke=\"{(IsSelected ? "#0066ff" : Stroke)}\" stroke-width=\"{StrokeWidth}\" fill=\"{Fill}\" stroke-linecap=\"round\" stroke-linejoin=\"round\"{GetSelectionStyle()} />";
@@ -401,6 +553,7 @@ public enum DrawingTool
     Polygon,
     Star,
     Arrow,
+    Arc,
     Text
 }
 

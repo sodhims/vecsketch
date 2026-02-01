@@ -35,71 +35,31 @@
 
         function setupPasteHandler(dotNetRef) {
             dotNetReference = dotNetRef;
-            
-            // Listen for paste events on the document
-            document.addEventListener('paste', handlePaste);
+            // Paste handling disabled - was causing unwanted text panel popups
+            // Image paste can be re-enabled later if needed
         }
 
         async function handlePaste(event) {
-            if (!dotNetReference) return;
-
-            // Don't intercept paste in input/textarea elements - let browser handle it
-            const target = event.target;
-            if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
-                return; // Let the browser handle paste naturally
-            }
-
-            const clipboardData = event.clipboardData || window.clipboardData;
-            if (!clipboardData) return;
-
-            // Check for image data first
-            const items = clipboardData.items;
-            for (let i = 0; i < items.length; i++) {
-                const item = items[i];
-                
-                if (item.type.indexOf('image') !== -1) {
-                    event.preventDefault();
-                    const blob = item.getAsFile();
-                    const reader = new FileReader();
-                    
-                    reader.onload = async function(e) {
-                        const dataUrl = e.target.result;
-                        
-                        // Get image dimensions
-                        const img = new Image();
-                        img.onload = function() {
-                            dotNetReference.invokeMethodAsync('HandlePastedImage', dataUrl, img.width, img.height);
-                        };
-                        img.src = dataUrl;
-                    };
-                    
-                    reader.readAsDataURL(blob);
-                    return;
-                }
-            }
-
-            // Check for text data
-            const text = clipboardData.getData('text/plain');
-            if (text) {
-                event.preventDefault();
-                dotNetReference.invokeMethodAsync('HandlePastedText', text);
-            }
+            // Disabled
         }
 
         async function pasteFromClipboard() {
-            if (!dotNetReference) return;
+            if (!dotNetReference) {
+                console.log('Paste: No dotNetReference');
+                return;
+            }
 
             try {
                 // Try to read from clipboard API (requires permission)
                 const clipboardItems = await navigator.clipboard.read();
-                
+
                 for (const item of clipboardItems) {
                     // Check for image types
                     const imageTypes = item.types.filter(type => type.startsWith('image/'));
                     if (imageTypes.length > 0) {
                         const blob = await item.getType(imageTypes[0]);
                         const reader = new FileReader();
-                        
+
                         reader.onload = function(e) {
                             const dataUrl = e.target.result;
                             const img = new Image();
@@ -108,7 +68,7 @@
                             };
                             img.src = dataUrl;
                         };
-                        
+
                         reader.readAsDataURL(blob);
                         return;
                     }
@@ -439,6 +399,7 @@
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
         }
+
     </script>
 </body>
 
