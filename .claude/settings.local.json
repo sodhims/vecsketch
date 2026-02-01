@@ -26,7 +26,17 @@
       "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd server-side proxy for AI API calls\n\nConverts to hosted Blazor WebAssembly with Server + Client + Shared projects:\n\n- Server: ASP.NET Core backend with /api/ai/generate and /api/ai/test-key endpoints\n- Client: Blazor WASM frontend \\(moved from root\\)\n- Shared: Request/response models shared between Server and Client\n\nThe proxy solves CORS issues by making API calls from the server instead of browser.\nNow both Anthropic and Ollama work without CORS configuration.\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(dotnet clean:*)",
       "Bash(curl:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(dir:*)",
+      "Bash(kill:*)",
+      "Bash(dotnet new:*)",
+      "WebFetch(domain:sodhims.github.io)",
+      "Bash(dotnet publish:*)",
+      "Bash(git pull:*)"
     ]
   }
 }

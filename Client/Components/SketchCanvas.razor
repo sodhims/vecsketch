@@ -37,28 +37,46 @@
         @if (ArrayMode)
         {
             <select @bind="ArrayCount" class="width-select" title="Copies">
-                @for (int i = 2; i <= 10; i++) { <option value="@i">@i</option> }
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="8">8</option>
+                <option value="10">10</option>
             </select>
             <button class="btn btn-xs @(ArrayHorizontal ? "btn-primary" : "btn-outline-secondary")"
                     @onclick="() => ArrayHorizontal = true" title="Horizontal">H</button>
             <button class="btn btn-xs @(!ArrayHorizontal ? "btn-primary" : "btn-outline-secondary")"
                     @onclick="() => ArrayHorizontal = false" title="Vertical">V</button>
             <select @bind="ArraySpacing" class="width-select" title="Spacing">
-                @foreach (var sp in new[] {30,50,75,100,150}) { <option value="@sp">@sp</option> }
+                <option value="30">30</option>
+                <option value="50">50</option>
+                <option value="75">75</option>
+                <option value="100">100</option>
+                <option value="150">150</option>
             </select>
         }
 
         @if (CurrentTool == DrawingTool.Polygon)
         {
             <select @bind="PolygonSides" class="width-select" title="Sides">
-                @foreach (var s in new[] {3,5,6,8,10,12}) { <option value="@s">@s</option> }
+                <option value="3">3</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="8">8</option>
+                <option value="10">10</option>
+                <option value="12">12</option>
             </select>
         }
 
         @if (CurrentTool == DrawingTool.Star)
         {
             <select @bind="StarPoints" class="width-select" title="Points">
-                @foreach (var p in new[] {4,5,6,8}) { <option value="@p">@p</option> }
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="8">8</option>
             </select>
         }
 
@@ -108,7 +126,7 @@
             <option value="darkish">Dark</option>
         </select>
 
-        <span class="release-label" title="Build timestamp">@BuildTimestamp.Substring(11)</span>
+        <span class="release-label" title="Build timestamp">@(BuildTimestamp.Length > 11 ? BuildTimestamp.Substring(11) : BuildTimestamp)</span>
 
         <div class="tool-group actions">
             <button class="btn btn-sm btn-outline-light" @onclick="OnPasteClick" title="Paste">📋</button>

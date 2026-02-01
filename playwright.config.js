@@ -2,6 +2,6 @@ module.exports = {
   testDir: './tests',
   timeout: 30000,
   use: {
-    baseURL: 'http://localhost:5199',
+    baseURL: 'http://localhost:5149',
   },
 };
